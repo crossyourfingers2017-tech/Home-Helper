@@ -8,17 +8,47 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Home Helper" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=2" />
   <title>Home Helper</title>
 </head>
 <body>
-  <div class="app-shell">
+  <div id="authScreen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="auth-logo">🏠</div>
+      <p class="eyebrow">Shared family chores</p>
+      <h1>Home Helper</h1>
+      <p class="muted">Use one family login on every phone so the same jobs and rewards appear everywhere.</p>
+
+      <form id="authForm">
+        <label>Email
+          <input id="authEmail" type="email" autocomplete="email" required placeholder="family@email.com">
+        </label>
+        <label>Password
+          <input id="authPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="At least 6 characters">
+        </label>
+        <div id="authMessage" class="auth-message"></div>
+        <button class="primary full" id="signInBtn" type="submit">Sign in</button>
+        <button class="secondary full" id="createAccountBtn" type="button">Create family account</button>
+      </form>
+      <p class="small-note">Use the same family email and password on Casey's and Riley's phones later.</p>
+    </div>
+  </div>
+
+  <div id="loadingScreen" class="loading-screen">
+    <div class="spinner"></div>
+    <strong>Opening Home Helper…</strong>
+  </div>
+
+  <div class="app-shell hidden" id="appShell">
     <header class="topbar">
       <div>
         <p class="eyebrow">Family chores</p>
-        <h1>Home Jobs</h1>
+        <h1>Home Helper</h1>
       </div>
-      <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
+      <div class="top-actions">
+        <span id="syncBadge" class="sync-badge">Connecting…</span>
+        <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
+      </div>
     </header>
 
     <main id="app"></main>
@@ -37,10 +67,7 @@
     <form method="dialog" id="taskForm">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div>
-          <p class="eyebrow">New job</p>
-          <h2>Add a task</h2>
-        </div>
+        <div><p class="eyebrow">New job</p><h2>Add a task</h2></div>
         <button type="button" class="icon-btn" data-close="taskDialog">✕</button>
       </div>
 
@@ -116,21 +143,25 @@
   <dialog id="settingsDialog" class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-head">
-      <div><p class="eyebrow">Settings</p><h2>Home Jobs</h2></div>
+      <div><p class="eyebrow">Settings</p><h2>Home Helper</h2></div>
       <button type="button" class="icon-btn" data-close="settingsDialog">✕</button>
     </div>
+
     <div class="settings-card">
-      <strong>Version 1</strong>
-      <p>Your data is currently saved on this device. Cloud sharing and phone notifications are the next step.</p>
+      <strong>☁️ Shared family sync</strong>
+      <p id="accountText">Signed in</p>
+      <p class="muted">Changes are saved to Firebase and shared between phones using the same family login.</p>
     </div>
+
     <button id="exportBtn" class="secondary full">Export backup</button>
     <label class="secondary full file-label">
       Import backup
       <input id="importInput" type="file" accept="application/json" hidden />
     </label>
-    <button id="resetBtn" class="danger full">Reset all app data</button>
+    <button id="signOutBtn" class="secondary full">Sign out</button>
+    <button id="resetBtn" class="danger full">Reset all family app data</button>
   </dialog>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js?v=2"></script>
 </body>
 </html>

@@ -1,62 +1,252 @@
 
-const STORAGE_KEY = "homeJobsV1";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, createUserWithEmailAndPassword,
+  signInWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-const seed = {
-  version: 1,
-  rooms: [
-    {id:"kitchen", name:"Kitchen", emoji:"🍽️"},
-    {id:"living", name:"Living Room", emoji:"🛋️"},
-    {id:"bathroom", name:"Bathroom", emoji:"🛁"},
-    {id:"mainbed", name:"Main Bedroom", emoji:"🛏️"},
-    {id:"caseyroom", name:"Casey's Bedroom", emoji:"🧸"},
-    {id:"rileyroom", name:"Riley's Bedroom", emoji:"🎮"},
-    {id:"hall", name:"Hall & Stairs", emoji:"🪜"},
-    {id:"other", name:"Other", emoji:"✨"}
-  ],
-  people: [
-    {id:"parent", name:"Parent", role:"adult", emoji:"🧑"},
-    {id:"casey", name:"Casey", role:"child", emoji:"👧"},
-    {id:"riley", name:"Riley", role:"child", emoji:"👦"}
-  ],
-  tasks: [
-    {id:crypto.randomUUID(), title:"Empty dishwasher", roomId:"kitchen", assigneeId:"riley", due:todayISO(), reward:0.75, notes:"", requiresApproval:true, status:"open", approvedAt:null, paid:false, createdAt:Date.now()},
-    {id:crypto.randomUUID(), title:"Polish bedroom", roomId:"caseyroom", assigneeId:"casey", due:todayISO(), reward:1.00, notes:"Desk, bedside table and shelves", requiresApproval:true, status:"open", approvedAt:null, paid:false, createdAt:Date.now()}
-  ]
+// Your Firebase project
+const firebaseConfig = {
+  apiKey: "AIzaSyCP2U8qFuEJXrFtItiams-o2yS7Z8a2ILI",
+  authDomain: "home-helper-770c9.firebaseapp.com",
+  projectId: "home-helper-770c9",
+  storageBucket: "home-helper-770c9.firebasestorage.app",
+  messagingSenderId: "218281054551",
+  appId: "1:218281054551:web:2d80f7f9f66b3e4e766e12"
 };
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+
+const LOCAL_KEY = "homeHelperV2";
+let state = loadLocal();
+let currentView = "home";
+let roomFilter = "all";
+let currentUser = null;
+let unsubscribeHome = null;
+let saveTimer = null;
+let cloudLoaded = false;
 
 function todayISO(){
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
-function load(){
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if(!raw){ localStorage.setItem(STORAGE_KEY, JSON.stringify(seed)); return structuredClone(seed); }
-  try{return JSON.parse(raw)}catch(e){return structuredClone(seed)}
+function newId(){
+  return (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
-let state = load();
-let currentView = "home";
-let roomFilter = "all";
+function defaultState(){
+  return {
+    version: 2,
+    rooms: [
+      {id:"kitchen", name:"Kitchen", emoji:"🍽️"},
+      {id:"living", name:"Living Room", emoji:"🛋️"},
+      {id:"bathroom", name:"Bathroom", emoji:"🛁"},
+      {id:"mainbed", name:"Main Bedroom", emoji:"🛏️"},
+      {id:"caseyroom", name:"Casey's Bedroom", emoji:"🧸"},
+      {id:"rileyroom", name:"Riley's Bedroom", emoji:"🎮"},
+      {id:"hall", name:"Hall & Stairs", emoji:"🪜"},
+      {id:"other", name:"Other", emoji:"✨"}
+    ],
+    people: [
+      {id:"parent", name:"Parent", role:"adult", emoji:"🧑"},
+      {id:"casey", name:"Casey", role:"child", emoji:"👧"},
+      {id:"riley", name:"Riley", role:"child", emoji:"👦"}
+    ],
+    tasks: []
+  };
+}
+function loadLocal(){
+  try{
+    const parsed = JSON.parse(localStorage.getItem(LOCAL_KEY));
+    return parsed?.rooms && parsed?.people && parsed?.tasks ? parsed : defaultState();
+  }catch{
+    return defaultState();
+  }
+}
+function saveLocal(){
+  localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+}
+function homeRef(){
+  return doc(db, "homes", currentUser.uid);
+}
 
-function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); render(); }
+function setSync(text, cls=""){
+  const b = document.getElementById("syncBadge");
+  if(!b) return;
+  b.textContent = text;
+  b.className = `sync-badge ${cls}`.trim();
+}
+
+async function saveCloudNow(){
+  if(!currentUser || !cloudLoaded) return;
+  saveLocal();
+  setSync("Saving…");
+  try{
+    await setDoc(homeRef(), {
+      version: 2,
+      rooms: state.rooms,
+      people: state.people,
+      tasks: state.tasks,
+      updatedAt: serverTimestamp()
+    });
+    setSync("Synced","ok");
+  }catch(err){
+    console.error(err);
+    setSync("Sync error","err");
+  }
+}
+function save(){
+  saveLocal();
+  render();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveCloudNow, 250);
+}
+
+async function beginCloudSync(user){
+  currentUser = user;
+  cloudLoaded = false;
+  setSync("Connecting…");
+  const ref = homeRef();
+
+  try{
+    const snap = await getDoc(ref);
+    if(!snap.exists()){
+      await setDoc(ref, {
+        version: 2,
+        rooms: state.rooms,
+        people: state.people,
+        tasks: state.tasks,
+        updatedAt: serverTimestamp()
+      });
+    }else{
+      const data = snap.data();
+      if(data.rooms && data.people && data.tasks){
+        state = {version:2, rooms:data.rooms, people:data.people, tasks:data.tasks};
+        saveLocal();
+      }
+    }
+
+    cloudLoaded = true;
+    render();
+    setSync("Synced","ok");
+
+    if(unsubscribeHome) unsubscribeHome();
+    unsubscribeHome = onSnapshot(ref, snap => {
+      if(!snap.exists()) return;
+      const data = snap.data();
+      if(data.rooms && data.people && data.tasks){
+        state = {version:2, rooms:data.rooms, people:data.people, tasks:data.tasks};
+        saveLocal();
+        render();
+        setSync("Synced","ok");
+      }
+    }, err => {
+      console.error(err);
+      setSync("Sync error","err");
+    });
+  }catch(err){
+    console.error(err);
+    cloudLoaded = true;
+    showApp();
+    setSync("Setup needed","err");
+    alert("Home Helper connected to Firebase, but Firestore is not ready yet. Finish the Firebase setup steps and reload the app.");
+  }
+}
+
+function showLoading(){
+  document.getElementById("loadingScreen").classList.remove("hidden");
+  document.getElementById("authScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+}
+function showAuth(){
+  document.getElementById("loadingScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+  document.getElementById("authScreen").classList.remove("hidden");
+}
+function showApp(){
+  document.getElementById("loadingScreen").classList.add("hidden");
+  document.getElementById("authScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+  document.getElementById("accountText").textContent = currentUser?.email ? `Signed in as ${currentUser.email}` : "Signed in";
+  render();
+}
+
+onAuthStateChanged(auth, async user => {
+  if(unsubscribeHome){ unsubscribeHome(); unsubscribeHome = null; }
+  if(!user){
+    currentUser = null;
+    cloudLoaded = false;
+    showAuth();
+    return;
+  }
+  showLoading();
+  currentUser = user;
+  await beginCloudSync(user);
+  showApp();
+});
+
+document.getElementById("authForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  setAuthMessage("");
+  try{
+    await signInWithEmailAndPassword(auth, email, password);
+  }catch(err){
+    setAuthMessage(authError(err.code));
+  }
+});
+document.getElementById("createAccountBtn").addEventListener("click", async () => {
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  if(!email || password.length < 6){
+    setAuthMessage("Enter an email and a password of at least 6 characters.");
+    return;
+  }
+  setAuthMessage("");
+  try{
+    await createUserWithEmailAndPassword(auth, email, password);
+  }catch(err){
+    setAuthMessage(authError(err.code));
+  }
+});
+function setAuthMessage(msg){ document.getElementById("authMessage").textContent = msg; }
+function authError(code){
+  const map = {
+    "auth/invalid-credential":"Email or password is incorrect.",
+    "auth/email-already-in-use":"That email already has a family account. Use Sign in instead.",
+    "auth/invalid-email":"Enter a valid email address.",
+    "auth/weak-password":"Use a stronger password with at least 6 characters.",
+    "auth/operation-not-allowed":"Email/password sign-in has not been enabled in Firebase yet."
+  };
+  return map[code] || `Sign-in problem: ${code || "unknown error"}`;
+}
+
 function money(n){ return new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(Number(n||0)); }
 function room(id){ return state.rooms.find(r=>r.id===id) || {name:"Other",emoji:"✨"}; }
 function person(id){ return state.people.find(p=>p.id===id) || {name:"Unassigned",emoji:"👤"}; }
-
 function weekStart(date=new Date()){
   const d=new Date(date); const day=(d.getDay()+6)%7; d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d;
 }
 function earnedThisWeek(personId){
   const start=weekStart().getTime();
-  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid && (t.approvedAt||0)>=start).reduce((s,t)=>s+Number(t.reward||0),0);
+  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid && (t.approvedAt||0)>=start)
+    .reduce((s,t)=>s+Number(t.reward||0),0);
 }
 function approvedUnpaid(personId){
-  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid).reduce((s,t)=>s+Number(t.reward||0),0);
+  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid)
+    .reduce((s,t)=>s+Number(t.reward||0),0);
 }
 function openCount(personId){
   return state.tasks.filter(t=>t.assigneeId===personId && ["open","pending"].includes(t.status)).length;
 }
 
 function render(){
+  if(!document.getElementById("app") || document.getElementById("appShell").classList.contains("hidden")) return;
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===currentView));
   const app=document.getElementById("app");
   if(currentView==="home") app.innerHTML=renderHome();
@@ -126,7 +316,7 @@ function renderRooms(){
       </button>`).join("")}
     </div>
     ${roomFilter!=="all" ? `
-      <div class="section-head"><h2>${room(roomFilter).name}</h2><button class="link-btn" data-action="clearRoomFilter">Show all</button></div>
+      <div class="section-head"><h2>${escapeHtml(room(roomFilter).name)}</h2><button class="link-btn" data-action="clearRoomFilter">Show all</button></div>
       <div class="cards">${state.tasks.filter(t=>t.roomId===roomFilter).map(renderTaskCard).join("") || `<div class="empty">No jobs in this room yet.</div>`}</div>`:""}`;
 }
 
@@ -188,18 +378,22 @@ function wireDynamic(){
     if(a==="deleteTask"){ if(confirm("Delete this job?")){state.tasks=state.tasks.filter(x=>x.id!==id);save();}}
     if(a==="filterRoom"){roomFilter=id;render();}
     if(a==="clearRoomFilter"){roomFilter="all";render();}
-    if(a==="markPaid"){ if(confirm(`Mark all approved rewards for ${person(id).name} as paid?`)){state.tasks.forEach(t=>{if(t.assigneeId===id&&t.status==="approved"&&!t.paid)t.paid=true});save();}}
+    if(a==="markPaid"){
+      if(confirm(`Mark all approved rewards for ${person(id).name} as paid?`)){
+        state.tasks.forEach(t=>{if(t.assigneeId===id&&t.status==="approved"&&!t.paid)t.paid=true});
+        save();
+      }
+    }
   }));
 }
-
 function completeTask(id){
   const t=state.tasks.find(x=>x.id===id); if(!t)return;
-  if(t.requiresApproval){t.status="pending"} else {t.status="approved"; t.approvedAt=Date.now()}
+  if(t.requiresApproval){t.status="pending"} else {t.status="approved";t.approvedAt=Date.now()}
   save();
 }
 function approveTask(id){
   const t=state.tasks.find(x=>x.id===id); if(!t)return;
-  t.status="approved"; t.approvedAt=Date.now(); save();
+  t.status="approved";t.approvedAt=Date.now();save();
 }
 
 document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>{currentView=b.dataset.view;roomFilter="all";render()}));
@@ -210,7 +404,7 @@ document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",
 document.getElementById("taskForm").addEventListener("submit", e=>{
   e.preventDefault();
   state.tasks.push({
-    id:crypto.randomUUID(),
+    id:newId(),
     title:document.getElementById("taskTitle").value.trim(),
     roomId:document.getElementById("taskRoom").value,
     assigneeId:document.getElementById("taskAssignee").value,
@@ -218,7 +412,7 @@ document.getElementById("taskForm").addEventListener("submit", e=>{
     reward:Number(document.getElementById("taskReward").value||0),
     notes:document.getElementById("taskNotes").value.trim(),
     requiresApproval:document.getElementById("taskRequiresApproval").checked,
-    status:"open", approvedAt:null, paid:false, createdAt:Date.now()
+    status:"open",approvedAt:null,paid:false,createdAt:Date.now()
   });
   document.getElementById("taskForm").reset();
   document.getElementById("taskRequiresApproval").checked=true;
@@ -230,42 +424,74 @@ document.getElementById("roomForm").addEventListener("submit",e=>{
   e.preventDefault();
   const name=document.getElementById("roomName").value.trim();
   if(!name)return;
-  state.rooms.push({id:crypto.randomUUID(),name,emoji:"🚪"});
-  document.getElementById("roomForm").reset(); document.getElementById("roomDialog").close(); save();
+  state.rooms.push({id:newId(),name,emoji:"🚪"});
+  document.getElementById("roomForm").reset();
+  document.getElementById("roomDialog").close();
+  save();
 });
 
 document.getElementById("personForm").addEventListener("submit",e=>{
   e.preventDefault();
   const name=document.getElementById("personName").value.trim();
   if(!name)return;
-  state.people.push({id:crypto.randomUUID(),name,role:document.getElementById("personRole").value,emoji:"👤"});
-  document.getElementById("personForm").reset(); document.getElementById("personDialog").close(); save();
+  state.people.push({id:newId(),name,role:document.getElementById("personRole").value,emoji:"👤"});
+  document.getElementById("personForm").reset();
+  document.getElementById("personDialog").close();
+  save();
 });
 
 document.getElementById("exportBtn").addEventListener("click",()=>{
   const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
-  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`home-jobs-backup-${todayISO()}.json`; a.click(); URL.revokeObjectURL(a.href);
-});
-document.getElementById("importInput").addEventListener("change",async e=>{
-  const f=e.target.files?.[0]; if(!f)return;
-  try{const imported=JSON.parse(await f.text()); if(!imported.rooms||!imported.people||!imported.tasks) throw new Error(); state=imported; save(); document.getElementById("settingsDialog").close(); alert("Backup imported.");}
-  catch{alert("That backup file could not be read.");}
-});
-document.getElementById("resetBtn").addEventListener("click",()=>{
-  if(confirm("Reset the app and remove all jobs from this device?")){state=structuredClone(seed);save();document.getElementById("settingsDialog").close();}
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`home-helper-backup-${todayISO()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
-function openDialog(id){ populateTaskSelects(); document.getElementById(id).showModal(); }
+document.getElementById("importInput").addEventListener("change",async e=>{
+  const f=e.target.files?.[0];if(!f)return;
+  try{
+    const imported=JSON.parse(await f.text());
+    if(!imported.rooms||!imported.people||!imported.tasks)throw new Error();
+    state={version:2,rooms:imported.rooms,people:imported.people,tasks:imported.tasks};
+    document.getElementById("settingsDialog").close();
+    save();
+    alert("Backup imported and synced.");
+  }catch{
+    alert("That backup file could not be read.");
+  }
+});
+
+document.getElementById("resetBtn").addEventListener("click",()=>{
+  if(confirm("Reset ALL Home Helper data for this family? This change will sync to every phone.")){
+    state=defaultState();
+    document.getElementById("settingsDialog").close();
+    save();
+  }
+});
+
+document.getElementById("signOutBtn").addEventListener("click",async()=>{
+  document.getElementById("settingsDialog").close();
+  await signOut(auth);
+});
+
+function openDialog(id){
+  populateTaskSelects();
+  if(id==="settingsDialog"){
+    document.getElementById("accountText").textContent=currentUser?.email?`Signed in as ${currentUser.email}`:"Signed in";
+  }
+  document.getElementById(id).showModal();
+}
 function friendlyDate(iso){
   if(!iso)return "";
   const d=new Date(iso+"T12:00:00");
-  if(iso===todayISO()) return "Today";
-  const tomorrow=new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  if(iso===todayISO())return "Today";
+  const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
   const tom=`${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,"0")}-${String(tomorrow.getDate()).padStart(2,"0")}`;
   if(iso===tom)return "Tomorrow";
   return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"short"}).format(d);
 }
-function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-
-if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
-render();
+function escapeHtml(s){
+  return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+}

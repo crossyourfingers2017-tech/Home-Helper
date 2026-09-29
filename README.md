@@ -1,23 +1,33 @@
-# Home Jobs — Version 1
+# Home Helper V2
 
-A mobile-first family cleaning and chores app.
-
-## Included
-- Rooms
-- Family members
-- Assign jobs
-- Due dates
-- Optional money reward
-- Done -> Parent approval
-- Weekly/unpaid totals
-- Mark rewards as paid
-- Add rooms and family members
+This version adds:
+- Firebase Email/Password family login
+- Shared Firestore data between phones
+- Live syncing
+- Rooms, family members, chores, approval and rewards
 - Backup/export and restore/import
-- Installable as a simple PWA
-- Data saved on the current device using localStorage
 
-## Next step
-Connect the app to Firebase so all phones share the same data. After that, add push notifications so assigned jobs can alert each person's phone.
+## Firebase setup required
 
-## GitHub Pages
-Upload all files in this folder to the root of a GitHub repository, then enable GitHub Pages from the main branch/root folder.
+### 1. Enable Email/Password Authentication
+Firebase Console → Authentication → Get started → Sign-in method → Email/Password → Enable → Save.
+
+### 2. Create Firestore
+Firebase Console → Firestore Database → Create database → Production mode.
+Choose a nearby European location if prompted.
+
+### 3. Paste the Firestore rules
+Open Firestore Database → Rules and replace the rules with the contents of `firestore.rules`, then Publish.
+
+### 4. Upload app files to GitHub
+Replace the existing Home-Helper repository files with:
+- index.html
+- app.js
+- styles.css
+- manifest.webmanifest
+- sw.js
+
+`firestore.rules` is for Firebase only; it does not need to be uploaded to GitHub.
+
+## Family login
+Create ONE family account from the app. Use that same email/password on each family phone.
