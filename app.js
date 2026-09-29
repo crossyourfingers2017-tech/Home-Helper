@@ -199,8 +199,8 @@ async function migrateV2(user,parentName,pin){
   const code=makeFamilyCode(),familyId=newId("family");
   const oldSnap=await getDoc(doc(db,"homes",user.uid)),old=oldSnap.exists()?oldSnap.data():{};
   const oldPeople=Array.isArray(old.people)?old.people:[],oldRooms=Array.isArray(old.rooms)&&old.rooms.length?old.rooms:defaultRooms(),oldTasks=Array.isArray(old.tasks)?old.tasks:[];
-  const parentOld=oldPeople.find(p=>p.role==="adult")||oldPeople.find(p=>p.id==="parent"),parentId=parentOld?.id||newId("member"),email=syntheticEmail(code,parentId);
-  await updateEmail(user,email);await updatePassword(user,pin);
+  const parentOld=oldPeople.find(p=>p.role==="adult")||oldPeople.find(p=>p.id==="parent"),parentId=parentOld?.id||newId("member"),email=user.email;
+  await updatePassword(user,pin);
   const members=[{id:parentId,name:parentName,role:"adult",emoji:"🧑",linked:true,uid:user.uid,loginEmail:email}];
   for(const p of oldPeople){if(p.id===parentId)continue;members.push({id:p.id||newId("member"),name:p.name||"Family member",role:p.role==="adult"?"adult":"child",emoji:p.emoji||"👤",linked:false,uid:null,loginEmail:null});}
   await setDoc(doc(db,"families",familyId),{name:"Our Home",code,ownerUid:user.uid,rooms:oldRooms,members,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
