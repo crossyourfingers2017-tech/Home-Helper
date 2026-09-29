@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Home Helper" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=33" />
+  <link rel="stylesheet" href="styles.css?v=34" />
   <title>Home Helper</title>
 </head>
 <body>
@@ -69,9 +69,8 @@
       <input id="memberExistingId" type="hidden" />
       <label>Name<input id="memberName" required maxlength="40" placeholder="e.g. Dad" /></label>
       <label>Account type<select id="memberRole"><option value="child">Child</option><option value="adult">Adult</option></select></label>
-      <label>6-digit PIN<input id="memberPin" type="password" required inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" /></label>
-      <p class="tiny-note">They will tap their name on the Home Helper login screen, then enter this PIN.</p>
-      <button class="primary full" id="memberSaveBtn" type="submit">Create login</button>
+      <p class="tiny-note">They will choose their own 6-digit PIN the first time they sign in.</p>
+      <button class="primary full" id="memberSaveBtn" type="submit">Add person</button>
     </form>
   </dialog>
 
@@ -93,6 +92,6 @@
     <button id="signOutBtn" class="secondary full">Sign out of this phone</button>
   </dialog>
 
-  <script type="module" src="app.js?v=33"></script>
+  <script type="module" src="app.js?v=34"></script>
 </body>
 </html>
