@@ -69,7 +69,7 @@
       <input id="memberExistingId" type="hidden" />
       <label>Name<input id="memberName" required maxlength="40" placeholder="e.g. Dad" /></label>
       <label>Account type<select id="memberRole"><option value="child">Child</option><option value="adult">Adult</option></select></label>
-      <label>6-digit PIN<input id="memberPin" required inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" /></label>
+      <label>6-digit PIN<input id="memberPin" type="password" required inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" /></label>
       <p class="tiny-note">They will tap their name on the Home Helper login screen, then enter this PIN.</p>
       <button class="primary full" id="memberSaveBtn" type="submit">Create login</button>
     </form>
