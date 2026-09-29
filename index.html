@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Home Jobs" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Home Jobs</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Family chores</p>
+        <h1>Home Jobs</h1>
+      </div>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
+    </header>
+
+    <main id="app"></main>
+
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button data-view="home" class="nav-btn active"><span>🏠</span><small>Home</small></button>
+      <button data-view="rooms" class="nav-btn"><span>🚪</span><small>Rooms</small></button>
+      <button data-view="family" class="nav-btn"><span>👨‍👩‍👧‍👦</span><small>Family</small></button>
+      <button data-view="pay" class="nav-btn"><span>💷</span><small>Pay</small></button>
+    </nav>
+
+    <button class="fab" id="quickAddBtn" aria-label="Add task">＋</button>
+  </div>
+
+  <dialog id="taskDialog" class="sheet">
+    <form method="dialog" id="taskForm">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div>
+          <p class="eyebrow">New job</p>
+          <h2>Add a task</h2>
+        </div>
+        <button type="button" class="icon-btn" data-close="taskDialog">✕</button>
+      </div>
+
+      <label>Task
+        <input id="taskTitle" required placeholder="e.g. Empty dishwasher" />
+      </label>
+
+      <div class="grid-2">
+        <label>Room
+          <select id="taskRoom"></select>
+        </label>
+        <label>Assign to
+          <select id="taskAssignee"></select>
+        </label>
+      </div>
+
+      <div class="grid-2">
+        <label>Due
+          <input id="taskDue" type="date" />
+        </label>
+        <label>Reward (£)
+          <input id="taskReward" type="number" min="0" step="0.25" value="0" />
+        </label>
+      </div>
+
+      <label class="check-row">
+        <input id="taskRequiresApproval" type="checkbox" checked />
+        <span>Parent approval needed before reward is added</span>
+      </label>
+
+      <label>Notes
+        <textarea id="taskNotes" rows="3" placeholder="Optional"></textarea>
+      </label>
+
+      <button class="primary full" type="submit">Add task</button>
+    </form>
+  </dialog>
+
+  <dialog id="roomDialog" class="sheet">
+    <form method="dialog" id="roomForm">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><p class="eyebrow">House</p><h2>Add a room</h2></div>
+        <button type="button" class="icon-btn" data-close="roomDialog">✕</button>
+      </div>
+      <label>Room name
+        <input id="roomName" required placeholder="e.g. Utility Room" />
+      </label>
+      <button class="primary full" type="submit">Add room</button>
+    </form>
+  </dialog>
+
+  <dialog id="personDialog" class="sheet">
+    <form method="dialog" id="personForm">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div><p class="eyebrow">Family</p><h2>Add a person</h2></div>
+        <button type="button" class="icon-btn" data-close="personDialog">✕</button>
+      </div>
+      <label>Name
+        <input id="personName" required placeholder="Name" />
+      </label>
+      <label>Role
+        <select id="personRole">
+          <option value="child">Child</option>
+          <option value="adult">Adult</option>
+        </select>
+      </label>
+      <button class="primary full" type="submit">Add person</button>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <div><p class="eyebrow">Settings</p><h2>Home Jobs</h2></div>
+      <button type="button" class="icon-btn" data-close="settingsDialog">✕</button>
+    </div>
+    <div class="settings-card">
+      <strong>Version 1</strong>
+      <p>Your data is currently saved on this device. Cloud sharing and phone notifications are the next step.</p>
+    </div>
+    <button id="exportBtn" class="secondary full">Export backup</button>
+    <label class="secondary full file-label">
+      Import backup
+      <input id="importInput" type="file" accept="application/json" hidden />
+    </label>
+    <button id="resetBtn" class="danger full">Reset all app data</button>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
