@@ -179,7 +179,7 @@ function gatePin(code,familyId,m){
   document.getElementById("pinForm").onsubmit=async e=>{
     e.preventDefault();
     const pin=document.getElementById("loginPin").value,msg=document.getElementById("pinError");
-    if(!/^\\d{6}$/.test(pin)){msg.textContent="Use a 6-digit PIN.";return;}
+    if(!/^\d{6}$/.test(pin)){msg.textContent="Use a 6-digit PIN.";return;}
     msg.textContent="Signing in…";
     const email=syntheticEmail(code,m.id);
     let secondApp=null;
