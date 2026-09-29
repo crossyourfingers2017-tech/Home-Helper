@@ -166,19 +166,44 @@ async function loadFamilyLogin(code){
     <div class="gate-logo">🏠</div><p class="eyebrow">Home Helper</p><h2>Who are you?</h2><p class="muted">Tap your name, then enter your PIN.</p>
     <div class="login-grid">${people.map(m=>`<button class="person-login" data-login-id="${escapeHtml(m.id)}"><span>${m.emoji||"👤"}</span>${escapeHtml(m.name)}</button>`).join("")}</div>
     <button class="secondary full" id="differentCodeBtn">Use a different family code</button>`);
-  document.querySelectorAll("[data-login-id]").forEach(btn=>btn.onclick=()=>gatePin(code,people.find(m=>m.id===btn.dataset.loginId)));
+  document.querySelectorAll("[data-login-id]").forEach(btn=>btn.onclick=()=>gatePin(code,data.familyId,people.find(m=>m.id===btn.dataset.loginId)));
   document.getElementById("differentCodeBtn").onclick=()=>{localStorage.removeItem(FAMILY_CODE_KEY);gateEnterCode();};
 }
-function gatePin(code,m){
+function gatePin(code,familyId,m){
   showGate(`
     <button class="back-btn" id="backPeople">← Back</button><div class="gate-logo">${m.emoji||"👤"}</div>
     <p class="eyebrow">${escapeHtml(m.role==="adult"?"Adult account":"Child account")}</p><h2>${escapeHtml(m.name)}</h2>
-    <form id="pinForm"><label>Enter your 6-digit PIN<input id="loginPin" type="password" class="pin-input" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus placeholder="••••••"></label>
+    <form id="pinForm"><label>Enter your 6-digit PIN<input id="loginPin" type="password" class="pin-input" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus placeholder="••••••"></label><p class="tiny-note">If this is your first sign-in, the PIN you enter now will become your PIN.</p>
     <div class="gate-error" id="pinError"></div><button class="primary full" type="submit">Open Home Helper</button></form>`);
   document.getElementById("backPeople").onclick=()=>loadFamilyLogin(code);
   document.getElementById("pinForm").onsubmit=async e=>{
-    e.preventDefault();const pin=document.getElementById("loginPin").value,msg=document.getElementById("pinError");msg.textContent="Signing in…";
-    try{switchingPerson=false;await signInWithEmailAndPassword(auth,m.loginEmail,pin);localStorage.setItem(ACTIVE_MEMBER_KEY,m.id);}catch(ex){console.error(ex);msg.textContent="That PIN is not correct.";}
+    e.preventDefault();
+    const pin=document.getElementById("loginPin").value,msg=document.getElementById("pinError");
+    if(!/^\\d{6}$/.test(pin)){msg.textContent="Use a 6-digit PIN.";return;}
+    msg.textContent="Signing in…";
+    const email=syntheticEmail(code,m.id);
+    let secondApp=null;
+    try{
+      const secondaryName=`firstpin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      secondApp=initializeApp(firebaseConfig,secondaryName);
+      const secondAuth=getAuth(secondApp);
+      const secondDb=getFirestore(secondApp);
+      try{
+        const cred=await createUserWithEmailAndPassword(secondAuth,email,pin);
+        await setDoc(doc(secondDb,"users",cred.user.uid),{familyId,memberId:m.id,role:m.role,name:m.name,familyCode:code});
+        await signOut(secondAuth);
+      }catch(ex){
+        if(ex?.code!=="auth/email-already-in-use") throw ex;
+      }finally{
+        try{if(secondApp)await deleteApp(secondApp);}catch{}
+      }
+      switchingPerson=false;
+      await signInWithEmailAndPassword(auth,email,pin);
+      localStorage.setItem(ACTIVE_MEMBER_KEY,m.id);
+    }catch(ex){
+      console.error(ex);
+      msg.textContent=ex?.code==="auth/invalid-credential"?"That PIN is not correct.":"Could not set or use that PIN. Try again.";
+    }
   };
 }
 
@@ -261,7 +286,7 @@ async function migrateV2(user,parentName,pin){
   await signOut(auth);
   await signInWithEmailAndPassword(auth,email,pin);
 }
-function publicMember(m){return{id:m.id,name:m.name,role:m.role,emoji:m.emoji||"👤",loginEmail:m.loginEmail};}
+function publicMember(m){return{id:m.id,name:m.name,role:m.role,emoji:m.emoji||"👤"};}
 function humanAuthError(ex){const map={"auth/email-already-in-use":"That login already exists. Try again.","auth/weak-password":"Use a 6-digit PIN.","auth/operation-not-allowed":"Email/password sign-in needs enabling in Firebase Authentication.","auth/network-request-failed":"There is a network problem. Try again."};return map[ex?.code]||ex?.message||"Something went wrong.";}
 
 onAuthStateChanged(auth,async user=>{
@@ -320,7 +345,7 @@ function renderCompleted(){
   return `<div class="section-head"><h2>${roleIsAdult()?"Completed – needs approval":"Waiting for approval"}</h2></div><p class="muted">${roleIsAdult()?"Work down this list and approve each finished job.":"Jobs you finish stay here until an adult approves them."}</p>${personTabs(completedPersonFilter,"filterCompletedPerson")}<div class="cards">${list.length?list.map(renderTaskCard).join(""):`<div class="empty">Nothing waiting for approval.</div>`}</div>`;
 }
 function renderFamily(){
-  const memberCards=allMembers().map(m=>`<article class="card member-row"><div class="member-avatar">${m.emoji||"👤"}</div><div class="member-main"><strong>${escapeHtml(m.name)}</strong><div class="meta">${m.role==="adult"?"Adult":"Child"} · ${m.linked?"Login ready":"No login set up yet"}</div></div>${roleIsAdult()&&!m.linked?`<button class="small-btn done-btn" data-action="setupMember" data-id="${m.id}">Set up login</button>`:""}</article>`).join("");
+  const memberCards=allMembers().map(m=>`<article class="card member-row"><div class="member-avatar">${m.emoji||"👤"}</div><div class="member-main"><strong>${escapeHtml(m.name)}</strong><div class="meta">${m.role==="adult"?"Adult":"Child"} · PIN chosen on first sign-in</div></div></article>`).join("");
   return `<div class="section-head"><h2>Family</h2>${roleIsAdult()?`<button class="link-btn" data-action="newMember">+ Add person</button>`:""}</div><div class="cards">${memberCards}</div><div class="section-head"><h2>Rooms</h2>${roleIsAdult()?`<button class="link-btn" data-action="newRoom">+ Add room</button>`:""}</div><div class="room-grid">${(family.rooms||[]).map(r=>`<div class="card room-tile"><span class="room-emoji">${r.emoji||"🚪"}</span><strong>${escapeHtml(r.name)}</strong></div>`).join("")}</div>`;
 }
 function renderRewards(){
@@ -347,7 +372,7 @@ function wireDynamic(){
   document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",async()=>{
     const a=el.dataset.action,id=el.dataset.id;
     if(a==="openTask")openTaskDialog();if(a==="jumpPerson"){personFilter=id;currentView="jobs";render();}if(a==="filterPerson"){personFilter=id;render();}if(a==="filterCompletedPerson"){completedPersonFilter=id;render();}if(a==="filterType"){typeFilter=id;render();}
-    if(a==="completeTask")await completeTask(id);if(a==="approveTask")await approveTask(id);if(a==="reopenTask")await reopenTask(id);if(a==="deleteTask")await deleteTaskAction(id);if(a==="markPaid")await markPaid(id);if(a==="newMember")openMemberDialog();if(a==="setupMember")openMemberDialog(id);if(a==="newRoom")document.getElementById("roomDialog").showModal();
+    if(a==="completeTask")await completeTask(id);if(a==="approveTask")await approveTask(id);if(a==="reopenTask")await reopenTask(id);if(a==="deleteTask")await deleteTaskAction(id);if(a==="markPaid")await markPaid(id);if(a==="newMember")openMemberDialog();if(a==="newRoom")document.getElementById("roomDialog").showModal();
   }));
 }
 async function completeTask(id){await updateDoc(doc(db,"families",profile.familyId,"tasks",id),{status:"pending",completedAt:Date.now(),updatedAt:serverTimestamp()});}
@@ -369,21 +394,32 @@ document.getElementById("taskForm").addEventListener("submit",async e=>{
   try{await setDoc(doc(db,"families",profile.familyId,"tasks",id),payload);document.getElementById("taskDialog").close();}catch(ex){alert(`Could not add job: ${ex.message}`);}
 });
 
-function openMemberDialog(existingId=""){
-  if(!roleIsAdult())return;const existing=existingId?member(existingId):null;
-  document.getElementById("memberExistingId").value=existing?.id||"";document.getElementById("memberName").value=existing?.name||"";document.getElementById("memberRole").value=existing?.role||"child";document.getElementById("memberName").disabled=Boolean(existing);document.getElementById("memberRole").disabled=Boolean(existing);document.getElementById("memberPin").value="";document.getElementById("memberDialogTitle").textContent=existing?`Set up ${existing.name}`:"Add a person";document.getElementById("memberSaveBtn").textContent=existing?"Create their login":"Add person & login";document.getElementById("memberDialog").showModal();
+function openMemberDialog(){
+  if(!roleIsAdult())return;
+  document.getElementById("memberName").value="";
+  document.getElementById("memberRole").value="child";
+  document.getElementById("memberDialogTitle").textContent="Add a person";
+  document.getElementById("memberSaveBtn").textContent="Add person";
+  document.getElementById("memberDialog").showModal();
 }
 document.getElementById("memberForm").addEventListener("submit",async e=>{
-  e.preventDefault();if(!roleIsAdult())return;
-  const existingId=document.getElementById("memberExistingId").value,pin=document.getElementById("memberPin").value;if(!/^\d{6}$/.test(pin)){alert("Use a 6-digit PIN.");return;}
-  const existing=existingId?member(existingId):null,name=existing?.name||document.getElementById("memberName").value.trim(),role=existing?.role||document.getElementById("memberRole").value;
-  if(!name)return;if(!existing&&allMembers().some(m=>m.name.toLowerCase()===name.toLowerCase())){alert("That name is already in the family.");return;}
-  const memberId=existing?.id||newId("member"),email=syntheticEmail(family.code,memberId),secondaryName=`secondary-${Date.now()}-${Math.random().toString(36).slice(2)}`,secondApp=initializeApp(firebaseConfig,secondaryName),secondAuth=getAuth(secondApp);
+  e.preventDefault();
+  if(!roleIsAdult())return;
+  const name=document.getElementById("memberName").value.trim();
+  const role=document.getElementById("memberRole").value;
+  if(!name)return;
+  if(allMembers().some(m=>m.name.toLowerCase()===name.toLowerCase())){alert("That name is already in the family.");return;}
+  const newMember={id:newId("member"),name,role,emoji:role==="adult"?"🧑":"🙂",linked:false,uid:null,loginEmail:null};
+  const newMembers=[...allMembers(),newMember];
   try{
-    const cred=await createUserWithEmailAndPassword(secondAuth,email,pin),uid=cred.user.uid,newMember={id:memberId,name,role,emoji:role==="adult"?"🧑":"🙂",linked:true,uid,loginEmail:email};
-    const newMembers=existing?allMembers().map(m=>m.id===memberId?newMember:m):[...allMembers(),newMember];
-    await setDoc(doc(db,"users",uid),{familyId:profile.familyId,memberId,role,name});await updateDoc(doc(db,"families",profile.familyId),{members:newMembers,updatedAt:serverTimestamp()});await updateDoc(doc(db,"familyCodes",family.code),{members:newMembers.filter(m=>m.linked).map(publicMember)});document.getElementById("memberDialog").close();
-  }catch(ex){console.error(ex);alert(humanAuthError(ex));}finally{try{await signOut(secondAuth);}catch{}try{await deleteApp(secondApp);}catch{}}
+    await updateDoc(doc(db,"families",profile.familyId),{members:newMembers,updatedAt:serverTimestamp()});
+    await updateDoc(doc(db,"familyCodes",family.code),{members:newMembers.map(publicMember)});
+    document.getElementById("memberForm").reset();
+    document.getElementById("memberDialog").close();
+  }catch(ex){
+    console.error(ex);
+    alert("Could not add that person. Try again.");
+  }
 });
 document.getElementById("roomForm").addEventListener("submit",async e=>{
   e.preventDefault();if(!roleIsAdult())return;const name=document.getElementById("roomName").value.trim();if(!name)return;if((family.rooms||[]).some(r=>r.name.toLowerCase()===name.toLowerCase())){alert("That room already exists.");return;}
