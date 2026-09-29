@@ -8,160 +8,91 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Home Helper" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=3" />
   <title>Home Helper</title>
 </head>
 <body>
-  <div id="authScreen" class="auth-screen hidden">
-    <div class="auth-card">
-      <div class="auth-logo">🏠</div>
-      <p class="eyebrow">Shared family chores</p>
-      <h1>Home Helper</h1>
-      <p class="muted">Use one family login on every phone so the same jobs and rewards appear everywhere.</p>
-
-      <form id="authForm">
-        <label>Email
-          <input id="authEmail" type="email" autocomplete="email" required placeholder="family@email.com">
-        </label>
-        <label>Password
-          <input id="authPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="At least 6 characters">
-        </label>
-        <div id="authMessage" class="auth-message"></div>
-        <button class="primary full" id="signInBtn" type="submit">Sign in</button>
-        <button class="secondary full" id="createAccountBtn" type="button">Create family account</button>
-      </form>
-      <p class="small-note">Use the same family email and password on Casey's and Riley's phones later.</p>
-    </div>
-  </div>
-
   <div id="loadingScreen" class="loading-screen">
-    <div class="spinner"></div>
-    <strong>Opening Home Helper…</strong>
+    <div class="spinner"></div><strong>Opening Home Helper…</strong>
   </div>
 
-  <div class="app-shell hidden" id="appShell">
+  <div id="gateScreen" class="gate-screen hidden"><div class="gate-card" id="gateCard"></div></div>
+
+  <div id="appShell" class="app-shell hidden">
     <header class="topbar">
-      <div>
-        <p class="eyebrow">Family chores</p>
-        <h1>Home Helper</h1>
-      </div>
-      <div class="top-actions">
-        <span id="syncBadge" class="sync-badge">Connecting…</span>
-        <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
-      </div>
+      <div><p class="eyebrow">Family organiser</p><h1>Home Helper</h1></div>
+      <div class="top-actions"><span id="syncBadge" class="sync-badge">Connecting…</span><button class="avatar-btn" id="profileBtn" aria-label="Profile">👤</button></div>
     </header>
-
     <main id="app"></main>
-
     <nav class="bottom-nav" aria-label="Main navigation">
       <button data-view="home" class="nav-btn active"><span>🏠</span><small>Home</small></button>
-      <button data-view="rooms" class="nav-btn"><span>🚪</span><small>Rooms</small></button>
+      <button data-view="jobs" class="nav-btn"><span>📋</span><small>Jobs</small></button>
+      <button data-view="completed" class="nav-btn"><span>✅</span><small>Done</small></button>
       <button data-view="family" class="nav-btn"><span>👨‍👩‍👧‍👦</span><small>Family</small></button>
-      <button data-view="pay" class="nav-btn"><span>💷</span><small>Pay</small></button>
+      <button data-view="rewards" class="nav-btn"><span>💷</span><small>Rewards</small></button>
     </nav>
-
     <button class="fab" id="quickAddBtn" aria-label="Add task">＋</button>
   </div>
 
   <dialog id="taskDialog" class="sheet">
-    <form method="dialog" id="taskForm">
+    <form id="taskForm">
       <div class="sheet-handle"></div>
-      <div class="sheet-head">
-        <div><p class="eyebrow">New job</p><h2>Add a task</h2></div>
-        <button type="button" class="icon-btn" data-close="taskDialog">✕</button>
+      <div class="sheet-head"><div><p class="eyebrow">New request</p><h2>Add a job</h2></div><button type="button" class="icon-btn" data-close="taskDialog">✕</button></div>
+      <label>What needs doing?<input id="taskTitle" required maxlength="120" placeholder="e.g. Empty dishwasher" /></label>
+      <div class="segmented">
+        <label><input type="radio" name="taskType" value="cleaning" checked><span>🧹 Cleaning</span></label>
+        <label><input type="radio" name="taskType" value="general"><span>🔧 General task</span></label>
       </div>
-
-      <label>Task
-        <input id="taskTitle" required placeholder="e.g. Empty dishwasher" />
-      </label>
-
+      <div id="roomField"><label>Room<select id="taskRoom"></select></label></div>
+      <label>Who is it for?<select id="taskAssignee"></select></label>
       <div class="grid-2">
-        <label>Room
-          <select id="taskRoom"></select>
-        </label>
-        <label>Assign to
-          <select id="taskAssignee"></select>
-        </label>
+        <label>Due date<input id="taskDue" type="date" /></label>
+        <label>Due time<input id="taskTime" type="time" /></label>
       </div>
-
-      <div class="grid-2">
-        <label>Due
-          <input id="taskDue" type="date" />
-        </label>
-        <label>Reward (£)
-          <input id="taskReward" type="number" min="0" step="0.25" value="0" />
-        </label>
+      <div id="rewardField"><label>Reward (£)<input id="taskReward" type="number" min="0" step="0.25" value="0" /></label></div>
+      <label>Notes<textarea id="taskNotes" rows="3" maxlength="500" placeholder="Optional details"></textarea></label>
+      <div class="notification-box">
+        <strong>🔔 Reminder plan</strong>
+        <label class="check-row"><input id="notifyAssigned" type="checkbox" checked><span>Notify when the job is assigned</span></label>
+        <label class="check-row"><input id="notifyDueDay" type="checkbox" checked><span>Notify on the morning it is due</span></label>
+        <label class="check-row"><input id="notifyOneHour" type="checkbox" checked><span>Notify 1 hour before the due time</span></label>
+        <p class="tiny-note">These settings are saved now. Phone push delivery is the next stage.</p>
       </div>
+      <button class="primary full" type="submit">Add job</button>
+    </form>
+  </dialog>
 
-      <label class="check-row">
-        <input id="taskRequiresApproval" type="checkbox" checked />
-        <span>Parent approval needed before reward is added</span>
-      </label>
-
-      <label>Notes
-        <textarea id="taskNotes" rows="3" placeholder="Optional"></textarea>
-      </label>
-
-      <button class="primary full" type="submit">Add task</button>
+  <dialog id="memberDialog" class="sheet">
+    <form id="memberForm">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head"><div><p class="eyebrow">Family login</p><h2 id="memberDialogTitle">Add person</h2></div><button type="button" class="icon-btn" data-close="memberDialog">✕</button></div>
+      <input id="memberExistingId" type="hidden" />
+      <label>Name<input id="memberName" required maxlength="40" placeholder="e.g. Dad" /></label>
+      <label>Account type<select id="memberRole"><option value="child">Child</option><option value="adult">Adult</option></select></label>
+      <label>6-digit PIN<input id="memberPin" required inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" /></label>
+      <p class="tiny-note">They will tap their name on the Home Helper login screen, then enter this PIN.</p>
+      <button class="primary full" id="memberSaveBtn" type="submit">Create login</button>
     </form>
   </dialog>
 
   <dialog id="roomDialog" class="sheet">
-    <form method="dialog" id="roomForm">
+    <form id="roomForm">
       <div class="sheet-handle"></div>
-      <div class="sheet-head">
-        <div><p class="eyebrow">House</p><h2>Add a room</h2></div>
-        <button type="button" class="icon-btn" data-close="roomDialog">✕</button>
-      </div>
-      <label>Room name
-        <input id="roomName" required placeholder="e.g. Utility Room" />
-      </label>
+      <div class="sheet-head"><div><p class="eyebrow">House</p><h2>Add a room</h2></div><button type="button" class="icon-btn" data-close="roomDialog">✕</button></div>
+      <label>Room name<input id="roomName" required maxlength="50" placeholder="e.g. Utility Room" /></label>
       <button class="primary full" type="submit">Add room</button>
     </form>
   </dialog>
 
-  <dialog id="personDialog" class="sheet">
-    <form method="dialog" id="personForm">
-      <div class="sheet-handle"></div>
-      <div class="sheet-head">
-        <div><p class="eyebrow">Family</p><h2>Add a person</h2></div>
-        <button type="button" class="icon-btn" data-close="personDialog">✕</button>
-      </div>
-      <label>Name
-        <input id="personName" required placeholder="Name" />
-      </label>
-      <label>Role
-        <select id="personRole">
-          <option value="child">Child</option>
-          <option value="adult">Adult</option>
-        </select>
-      </label>
-      <button class="primary full" type="submit">Add person</button>
-    </form>
-  </dialog>
-
-  <dialog id="settingsDialog" class="sheet">
+  <dialog id="profileDialog" class="sheet">
     <div class="sheet-handle"></div>
-    <div class="sheet-head">
-      <div><p class="eyebrow">Settings</p><h2>Home Helper</h2></div>
-      <button type="button" class="icon-btn" data-close="settingsDialog">✕</button>
-    </div>
-
-    <div class="settings-card">
-      <strong>☁️ Shared family sync</strong>
-      <p id="accountText">Signed in</p>
-      <p class="muted">Changes are saved to Firebase and shared between phones using the same family login.</p>
-    </div>
-
-    <button id="exportBtn" class="secondary full">Export backup</button>
-    <label class="secondary full file-label">
-      Import backup
-      <input id="importInput" type="file" accept="application/json" hidden />
-    </label>
-    <button id="signOutBtn" class="secondary full">Sign out</button>
-    <button id="resetBtn" class="danger full">Reset all family app data</button>
+    <div class="sheet-head"><div><p class="eyebrow">Account</p><h2 id="profileName">Home Helper</h2></div><button type="button" class="icon-btn" data-close="profileDialog">✕</button></div>
+    <div class="settings-card"><div id="profileRole" class="role-pill"></div><p id="familyCodeText" class="muted"></p></div>
+    <button id="copyFamilyCodeBtn" class="secondary full">Copy family code</button>
+    <button id="switchPersonBtn" class="secondary full">Switch person</button>
+    <button id="signOutBtn" class="secondary full">Sign out of this phone</button>
   </dialog>
 
-  <script type="module" src="app.js?v=2"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>

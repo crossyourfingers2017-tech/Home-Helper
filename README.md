@@ -1,33 +1,50 @@
-# Home Helper V2
+# Home Helper V3
 
-This version adds:
-- Firebase Email/Password family login
-- Shared Firestore data between phones
-- Live syncing
-- Rooms, family members, chores, approval and rewards
-- Backup/export and restore/import
+This version changes Home Helper to individual family accounts with simple name + 6-digit PIN login.
 
-## Firebase setup required
+## Included
+- Pick your name, then enter a 6-digit PIN
+- Adult and child roles
+- Adults can see separate job lists for every family member
+- Separate Completed / Needs Approval area
+- Children can add jobs for anyone in the family
+- Children cannot delete or approve jobs
+- Cleaning tasks and General tasks
+- Requested-by name on every task
+- Due date + optional due time
+- Saved reminder preferences: when assigned, on due day, one hour before due time
+- Adult reward approval and payment tracking
+- Family code to link a new phone
+- Rooms and family management
+- One-time migration from the previous V2 shared-login app
 
-### 1. Enable Email/Password Authentication
-Firebase Console → Authentication → Get started → Sign-in method → Email/Password → Enable → Save.
+## IMPORTANT: Firebase rules must be updated first
+Open Firebase Console -> Firestore Database -> Rules.
+Replace the current rules with the contents of `firestore.rules`.
+Publish them BEFORE uploading V3 to GitHub.
 
-### 2. Create Firestore
-Firebase Console → Firestore Database → Create database → Production mode.
-Choose a nearby European location if prompted.
-
-### 3. Paste the Firestore rules
-Open Firestore Database → Rules and replace the rules with the contents of `firestore.rules`, then Publish.
-
-### 4. Upload app files to GitHub
-Replace the existing Home-Helper repository files with:
+## Upload to GitHub
+Replace these existing files in the Home-Helper repo:
 - index.html
 - app.js
 - styles.css
 - manifest.webmanifest
 - sw.js
+- README.md
 
-`firestore.rules` is for Firebase only; it does not need to be uploaded to GitHub.
+Do not upload firestore.rules to the website; it is only for the Firebase Rules screen.
 
-## Family login
-Create ONE family account from the app. Use that same email/password on each family phone.
+## Existing V2 account
+If V2 is still signed in on the same browser, V3 will show a one-time upgrade screen.
+Enter the adult's display name and a new 6-digit PIN.
+
+## New phones
+1. Open Home Helper.
+2. Tap "Use my family code".
+3. Enter the 10-character family code.
+4. Pick a family member's name.
+5. Enter their 6-digit PIN.
+
+## Notifications
+V3 stores the due date/time and notification choices, but actual phone push delivery is intentionally not enabled yet.
+The next stage will connect free Web Push / Firebase Cloud Messaging and a free scheduler.

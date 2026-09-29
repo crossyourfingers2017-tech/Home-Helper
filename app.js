@@ -1,14 +1,13 @@
-
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, createUserWithEmailAndPassword,
-  signInWithEmailAndPassword, signOut
+  getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  signOut, updateEmail, updatePassword
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection,
+  onSnapshot, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-// Your Firebase project
 const firebaseConfig = {
   apiKey: "AIzaSyCP2U8qFuEJXrFtItiams-o2yS7Z8a2ILI",
   authDomain: "home-helper-770c9.firebaseapp.com",
@@ -18,480 +17,340 @@ const firebaseConfig = {
   appId: "1:218281054551:web:2d80f7f9f66b3e4e766e12"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
 
-const LOCAL_KEY = "homeHelperV2";
-let state = loadLocal();
-let currentView = "home";
-let roomFilter = "all";
+const FAMILY_CODE_KEY = "homeHelperFamilyCodeV3";
+const ACTIVE_MEMBER_KEY = "homeHelperActiveMemberV3";
+
 let currentUser = null;
-let unsubscribeHome = null;
-let saveTimer = null;
-let cloudLoaded = false;
+let profile = null;
+let family = null;
+let tasks = [];
+let currentView = "home";
+let personFilter = "all";
+let typeFilter = "all";
+let completedPersonFilter = "all";
+let familyUnsub = null;
+let tasksUnsub = null;
+let switchingPerson = false;
 
-function todayISO(){
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+function newId(prefix="id"){
+  const raw = crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${raw}`;
 }
-function newId(){
-  return (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function makeFamilyCode(){
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for(let i=0;i<10;i++) out += chars[Math.floor(Math.random()*chars.length)];
+  return out;
 }
-function defaultState(){
-  return {
-    version: 2,
-    rooms: [
-      {id:"kitchen", name:"Kitchen", emoji:"🍽️"},
-      {id:"living", name:"Living Room", emoji:"🛋️"},
-      {id:"bathroom", name:"Bathroom", emoji:"🛁"},
-      {id:"mainbed", name:"Main Bedroom", emoji:"🛏️"},
-      {id:"caseyroom", name:"Casey's Bedroom", emoji:"🧸"},
-      {id:"rileyroom", name:"Riley's Bedroom", emoji:"🎮"},
-      {id:"hall", name:"Hall & Stairs", emoji:"🪜"},
-      {id:"other", name:"Other", emoji:"✨"}
-    ],
-    people: [
-      {id:"parent", name:"Parent", role:"adult", emoji:"🧑"},
-      {id:"casey", name:"Casey", role:"child", emoji:"👧"},
-      {id:"riley", name:"Riley", role:"child", emoji:"👦"}
-    ],
-    tasks: []
-  };
+function syntheticEmail(code, memberId){
+  const safe = memberId.toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24);
+  return `${code.toLowerCase()}.${safe}@login.homehelper.app`;
 }
-function loadLocal(){
-  try{
-    const parsed = JSON.parse(localStorage.getItem(LOCAL_KEY));
-    return parsed?.rooms && parsed?.people && parsed?.tasks ? parsed : defaultState();
-  }catch{
-    return defaultState();
-  }
-}
-function saveLocal(){
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
-}
-function homeRef(){
-  return doc(db, "homes", currentUser.uid);
-}
-
-function setSync(text, cls=""){
-  const b = document.getElementById("syncBadge");
-  if(!b) return;
-  b.textContent = text;
-  b.className = `sync-badge ${cls}`.trim();
-}
-
-async function saveCloudNow(){
-  if(!currentUser || !cloudLoaded) return;
-  saveLocal();
-  setSync("Saving…");
-  try{
-    await setDoc(homeRef(), {
-      version: 2,
-      rooms: state.rooms,
-      people: state.people,
-      tasks: state.tasks,
-      updatedAt: serverTimestamp()
-    });
-    setSync("Synced","ok");
-  }catch(err){
-    console.error(err);
-    setSync("Sync error","err");
-  }
-}
-function save(){
-  saveLocal();
-  render();
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveCloudNow, 250);
-}
-
-async function beginCloudSync(user){
-  currentUser = user;
-  cloudLoaded = false;
-  setSync("Connecting…");
-  const ref = homeRef();
-
-  try{
-    const snap = await getDoc(ref);
-    if(!snap.exists()){
-      await setDoc(ref, {
-        version: 2,
-        rooms: state.rooms,
-        people: state.people,
-        tasks: state.tasks,
-        updatedAt: serverTimestamp()
-      });
-    }else{
-      const data = snap.data();
-      if(data.rooms && data.people && data.tasks){
-        state = {version:2, rooms:data.rooms, people:data.people, tasks:data.tasks};
-        saveLocal();
-      }
-    }
-
-    cloudLoaded = true;
-    render();
-    setSync("Synced","ok");
-
-    if(unsubscribeHome) unsubscribeHome();
-    unsubscribeHome = onSnapshot(ref, snap => {
-      if(!snap.exists()) return;
-      const data = snap.data();
-      if(data.rooms && data.people && data.tasks){
-        state = {version:2, rooms:data.rooms, people:data.people, tasks:data.tasks};
-        saveLocal();
-        render();
-        setSync("Synced","ok");
-      }
-    }, err => {
-      console.error(err);
-      setSync("Sync error","err");
-    });
-  }catch(err){
-    console.error(err);
-    cloudLoaded = true;
-    showApp();
-    setSync("Setup needed","err");
-    alert("Home Helper connected to Firebase, but Firestore is not ready yet. Finish the Firebase setup steps and reload the app.");
-  }
-}
-
-function showLoading(){
-  document.getElementById("loadingScreen").classList.remove("hidden");
-  document.getElementById("authScreen").classList.add("hidden");
-  document.getElementById("appShell").classList.add("hidden");
-}
-function showAuth(){
-  document.getElementById("loadingScreen").classList.add("hidden");
-  document.getElementById("appShell").classList.add("hidden");
-  document.getElementById("authScreen").classList.remove("hidden");
-}
-function showApp(){
-  document.getElementById("loadingScreen").classList.add("hidden");
-  document.getElementById("authScreen").classList.add("hidden");
-  document.getElementById("appShell").classList.remove("hidden");
-  document.getElementById("accountText").textContent = currentUser?.email ? `Signed in as ${currentUser.email}` : "Signed in";
-  render();
-}
-
-onAuthStateChanged(auth, async user => {
-  if(unsubscribeHome){ unsubscribeHome(); unsubscribeHome = null; }
-  if(!user){
-    currentUser = null;
-    cloudLoaded = false;
-    showAuth();
-    return;
-  }
-  showLoading();
-  currentUser = user;
-  await beginCloudSync(user);
-  showApp();
-});
-
-document.getElementById("authForm").addEventListener("submit", async e => {
-  e.preventDefault();
-  const email = document.getElementById("authEmail").value.trim();
-  const password = document.getElementById("authPassword").value;
-  setAuthMessage("");
-  try{
-    await signInWithEmailAndPassword(auth, email, password);
-  }catch(err){
-    setAuthMessage(authError(err.code));
-  }
-});
-document.getElementById("createAccountBtn").addEventListener("click", async () => {
-  const email = document.getElementById("authEmail").value.trim();
-  const password = document.getElementById("authPassword").value;
-  if(!email || password.length < 6){
-    setAuthMessage("Enter an email and a password of at least 6 characters.");
-    return;
-  }
-  setAuthMessage("");
-  try{
-    await createUserWithEmailAndPassword(auth, email, password);
-  }catch(err){
-    setAuthMessage(authError(err.code));
-  }
-});
-function setAuthMessage(msg){ document.getElementById("authMessage").textContent = msg; }
-function authError(code){
-  const map = {
-    "auth/invalid-credential":"Email or password is incorrect.",
-    "auth/email-already-in-use":"That email already has a family account. Use Sign in instead.",
-    "auth/invalid-email":"Enter a valid email address.",
-    "auth/weak-password":"Use a stronger password with at least 6 characters.",
-    "auth/operation-not-allowed":"Email/password sign-in has not been enabled in Firebase yet."
-  };
-  return map[code] || `Sign-in problem: ${code || "unknown error"}`;
-}
-
-function money(n){ return new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(Number(n||0)); }
-function room(id){ return state.rooms.find(r=>r.id===id) || {name:"Other",emoji:"✨"}; }
-function person(id){ return state.people.find(p=>p.id===id) || {name:"Unassigned",emoji:"👤"}; }
-function weekStart(date=new Date()){
-  const d=new Date(date); const day=(d.getDay()+6)%7; d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d;
-}
-function earnedThisWeek(personId){
-  const start=weekStart().getTime();
-  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid && (t.approvedAt||0)>=start)
-    .reduce((s,t)=>s+Number(t.reward||0),0);
-}
-function approvedUnpaid(personId){
-  return state.tasks.filter(t=>t.assigneeId===personId && t.status==="approved" && !t.paid)
-    .reduce((s,t)=>s+Number(t.reward||0),0);
-}
-function openCount(personId){
-  return state.tasks.filter(t=>t.assigneeId===personId && ["open","pending"].includes(t.status)).length;
-}
-
-function render(){
-  if(!document.getElementById("app") || document.getElementById("appShell").classList.contains("hidden")) return;
-  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===currentView));
-  const app=document.getElementById("app");
-  if(currentView==="home") app.innerHTML=renderHome();
-  if(currentView==="rooms") app.innerHTML=renderRooms();
-  if(currentView==="family") app.innerHTML=renderFamily();
-  if(currentView==="pay") app.innerHTML=renderPay();
-  wireDynamic();
-  populateTaskSelects();
-}
-
-function renderHome(){
-  const today=todayISO();
-  const todayTasks=state.tasks.filter(t=>t.due===today && t.status!=="approved");
-  const pending=state.tasks.filter(t=>t.status==="pending").length;
-  const weekTotal=state.people.filter(p=>p.role==="child").reduce((s,p)=>s+approvedUnpaid(p.id),0);
-  const visible = state.tasks
-    .filter(t=>t.status!=="approved" || !t.paid)
-    .sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
-
-  return `
-    <section class="hero">
-      <p class="eyebrow" style="color:#cbd5e1">Today</p>
-      <h2>${todayTasks.length ? `${todayTasks.length} job${todayTasks.length===1?"":"s"} to keep on top of` : "You're all caught up"}</h2>
-      <div class="hero-stats">
-        <div class="stat"><strong>${todayTasks.length}</strong><span>Due today</span></div>
-        <div class="stat"><strong>${pending}</strong><span>Need approval</span></div>
-        <div class="stat"><strong>${money(weekTotal)}</strong><span>To pay</span></div>
-      </div>
-    </section>
-    <div class="section-head"><h2>Jobs</h2><button class="link-btn" data-action="openTask">+ Add</button></div>
-    <div class="cards">
-      ${visible.length ? visible.map(renderTaskCard).join("") : `<div class="empty">No jobs yet. Tap + to add one.</div>`}
-    </div>`;
-}
-
-function renderTaskCard(t){
-  const p=person(t.assigneeId), r=room(t.roomId);
-  const statusText = t.status==="pending" ? "Waiting for approval" : t.status==="approved" ? (t.paid?"Paid":"Approved") : "To do";
-  return `<article class="card task-card">
-    <div>
-      <div class="task-title">${escapeHtml(t.title)}</div>
-      <div class="meta">${r.emoji} ${escapeHtml(r.name)} · ${p.emoji} ${escapeHtml(p.name)}${t.due?` · Due ${friendlyDate(t.due)}`:""}</div>
-      <div class="badges">
-        <span class="badge">${statusText}</span>
-        ${Number(t.reward)>0?`<span class="badge reward">${money(t.reward)}</span>`:""}
-      </div>
-      ${t.notes?`<p class="meta" style="margin:10px 0 0">${escapeHtml(t.notes)}</p>`:""}
-      <div class="task-actions">
-        ${t.status==="open" ? `<button class="small-btn done" data-action="done" data-id="${t.id}">✓ Done</button>`:""}
-        ${t.status==="pending" ? `<button class="small-btn approve" data-action="approve" data-id="${t.id}">Approve</button>`:""}
-        ${t.status==="approved" && !t.paid ? `<button class="small-btn done" data-action="undoApproval" data-id="${t.id}">Undo</button>`:""}
-        <button class="small-btn delete" data-action="deleteTask" data-id="${t.id}">Delete</button>
-      </div>
-    </div>
-    <div style="font-size:26px">${r.emoji}</div>
-  </article>`;
-}
-
-function renderRooms(){
-  const tasksFor = id => state.tasks.filter(t=>t.roomId===id && t.status!=="approved").length;
-  return `
-    <div class="section-head"><h2>Rooms</h2><button class="link-btn" data-action="openRoom">+ Add room</button></div>
-    <div class="room-grid">
-      ${state.rooms.map(r=>`<button class="card room-card" data-action="filterRoom" data-id="${r.id}" style="text-align:left;border:1px solid var(--line)">
-        <span class="room-emoji">${r.emoji}</span>
-        <span><strong>${escapeHtml(r.name)}</strong><br><span class="meta">${tasksFor(r.id)} open job${tasksFor(r.id)===1?"":"s"}</span></span>
-      </button>`).join("")}
-    </div>
-    ${roomFilter!=="all" ? `
-      <div class="section-head"><h2>${escapeHtml(room(roomFilter).name)}</h2><button class="link-btn" data-action="clearRoomFilter">Show all</button></div>
-      <div class="cards">${state.tasks.filter(t=>t.roomId===roomFilter).map(renderTaskCard).join("") || `<div class="empty">No jobs in this room yet.</div>`}</div>`:""}`;
-}
-
-function renderFamily(){
-  return `
-    <div class="section-head"><h2>Family</h2><button class="link-btn" data-action="openPerson">+ Add person</button></div>
-    <div class="cards">
-      ${state.people.map(p=>`<article class="card person-row">
-        <div class="avatar">${p.emoji||"👤"}</div>
-        <div class="person-main">
-          <strong>${escapeHtml(p.name)}</strong>
-          <span class="meta">${p.role==="child"?"Child":"Adult"} · ${openCount(p.id)} open</span>
-        </div>
-        <div style="text-align:right"><div class="money">${p.role==="child"?money(approvedUnpaid(p.id)):"—"}</div><span class="meta">${p.role==="child"?"unpaid":" "}</span></div>
-      </article>`).join("")}
-    </div>`;
-}
-
-function renderPay(){
-  const kids=state.people.filter(p=>p.role==="child");
-  return `
-    <section class="hero">
-      <p class="eyebrow" style="color:#cbd5e1">Weekly rewards</p>
-      <h2>${money(kids.reduce((s,p)=>s+approvedUnpaid(p.id),0))} currently owed</h2>
-      <p style="opacity:.85;margin-bottom:0">Only approved jobs count towards payment.</p>
-    </section>
-    <div class="cards">
-      ${kids.map(p=>{
-        const total=approvedUnpaid(p.id);
-        const week=earnedThisWeek(p.id);
-        const approvedTasks=state.tasks.filter(t=>t.assigneeId===p.id && t.status==="approved" && !t.paid);
-        return `<article class="card">
-          <div class="paid-row"><div><strong style="font-size:18px">${p.emoji} ${escapeHtml(p.name)}</strong><div class="meta">${approvedTasks.length} approved job${approvedTasks.length===1?"":"s"}</div></div><div class="money">${money(total)}</div></div>
-          <div class="badges"><span class="badge">This week: ${money(week)}</span></div>
-          ${total>0?`<button class="primary full" data-action="markPaid" data-id="${p.id}">Mark ${money(total)} as paid</button>`:`<div class="meta" style="margin-top:12px">Nothing to pay yet.</div>`}
-        </article>`;
-      }).join("")}
-    </div>`;
-}
-
-function populateTaskSelects(){
-  const roomSel=document.getElementById("taskRoom");
-  const personSel=document.getElementById("taskAssignee");
-  if(roomSel) roomSel.innerHTML=state.rooms.map(r=>`<option value="${r.id}">${r.emoji} ${escapeHtml(r.name)}</option>`).join("");
-  if(personSel) personSel.innerHTML=state.people.map(p=>`<option value="${p.id}">${p.emoji||"👤"} ${escapeHtml(p.name)}</option>`).join("");
-  const due=document.getElementById("taskDue");
-  if(due && !due.value) due.value=todayISO();
-}
-
-function wireDynamic(){
-  document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click", ()=>{
-    const a=el.dataset.action, id=el.dataset.id;
-    if(a==="openTask") openDialog("taskDialog");
-    if(a==="openRoom") openDialog("roomDialog");
-    if(a==="openPerson") openDialog("personDialog");
-    if(a==="done") completeTask(id);
-    if(a==="approve") approveTask(id);
-    if(a==="undoApproval"){const t=state.tasks.find(x=>x.id===id); if(t){t.status="pending";t.approvedAt=null;save();}}
-    if(a==="deleteTask"){ if(confirm("Delete this job?")){state.tasks=state.tasks.filter(x=>x.id!==id);save();}}
-    if(a==="filterRoom"){roomFilter=id;render();}
-    if(a==="clearRoomFilter"){roomFilter="all";render();}
-    if(a==="markPaid"){
-      if(confirm(`Mark all approved rewards for ${person(id).name} as paid?`)){
-        state.tasks.forEach(t=>{if(t.assigneeId===id&&t.status==="approved"&&!t.paid)t.paid=true});
-        save();
-      }
-    }
-  }));
-}
-function completeTask(id){
-  const t=state.tasks.find(x=>x.id===id); if(!t)return;
-  if(t.requiresApproval){t.status="pending"} else {t.status="approved";t.approvedAt=Date.now()}
-  save();
-}
-function approveTask(id){
-  const t=state.tasks.find(x=>x.id===id); if(!t)return;
-  t.status="approved";t.approvedAt=Date.now();save();
-}
-
-document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>{currentView=b.dataset.view;roomFilter="all";render()}));
-document.getElementById("quickAddBtn").addEventListener("click",()=>openDialog("taskDialog"));
-document.getElementById("settingsBtn").addEventListener("click",()=>openDialog("settingsDialog"));
-document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>document.getElementById(b.dataset.close).close()));
-
-document.getElementById("taskForm").addEventListener("submit", e=>{
-  e.preventDefault();
-  state.tasks.push({
-    id:newId(),
-    title:document.getElementById("taskTitle").value.trim(),
-    roomId:document.getElementById("taskRoom").value,
-    assigneeId:document.getElementById("taskAssignee").value,
-    due:document.getElementById("taskDue").value,
-    reward:Number(document.getElementById("taskReward").value||0),
-    notes:document.getElementById("taskNotes").value.trim(),
-    requiresApproval:document.getElementById("taskRequiresApproval").checked,
-    status:"open",approvedAt:null,paid:false,createdAt:Date.now()
-  });
-  document.getElementById("taskForm").reset();
-  document.getElementById("taskRequiresApproval").checked=true;
-  document.getElementById("taskDialog").close();
-  save();
-});
-
-document.getElementById("roomForm").addEventListener("submit",e=>{
-  e.preventDefault();
-  const name=document.getElementById("roomName").value.trim();
-  if(!name)return;
-  state.rooms.push({id:newId(),name,emoji:"🚪"});
-  document.getElementById("roomForm").reset();
-  document.getElementById("roomDialog").close();
-  save();
-});
-
-document.getElementById("personForm").addEventListener("submit",e=>{
-  e.preventDefault();
-  const name=document.getElementById("personName").value.trim();
-  if(!name)return;
-  state.people.push({id:newId(),name,role:document.getElementById("personRole").value,emoji:"👤"});
-  document.getElementById("personForm").reset();
-  document.getElementById("personDialog").close();
-  save();
-});
-
-document.getElementById("exportBtn").addEventListener("click",()=>{
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);
-  a.download=`home-helper-backup-${todayISO()}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
-
-document.getElementById("importInput").addEventListener("change",async e=>{
-  const f=e.target.files?.[0];if(!f)return;
-  try{
-    const imported=JSON.parse(await f.text());
-    if(!imported.rooms||!imported.people||!imported.tasks)throw new Error();
-    state={version:2,rooms:imported.rooms,people:imported.people,tasks:imported.tasks};
-    document.getElementById("settingsDialog").close();
-    save();
-    alert("Backup imported and synced.");
-  }catch{
-    alert("That backup file could not be read.");
-  }
-});
-
-document.getElementById("resetBtn").addEventListener("click",()=>{
-  if(confirm("Reset ALL Home Helper data for this family? This change will sync to every phone.")){
-    state=defaultState();
-    document.getElementById("settingsDialog").close();
-    save();
-  }
-});
-
-document.getElementById("signOutBtn").addEventListener("click",async()=>{
-  document.getElementById("settingsDialog").close();
-  await signOut(auth);
-});
-
-function openDialog(id){
-  populateTaskSelects();
-  if(id==="settingsDialog"){
-    document.getElementById("accountText").textContent=currentUser?.email?`Signed in as ${currentUser.email}`:"Signed in";
-  }
-  document.getElementById(id).showModal();
-}
+function money(n){return new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(Number(n||0));}
+function todayISO(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function friendlyDate(iso){
   if(!iso)return "";
   const d=new Date(iso+"T12:00:00");
   if(iso===todayISO())return "Today";
-  const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
-  const tom=`${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,"0")}-${String(tomorrow.getDate()).padStart(2,"0")}`;
+  const t=new Date();t.setDate(t.getDate()+1);
+  const tom=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
   if(iso===tom)return "Tomorrow";
   return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"short"}).format(d);
 }
-function escapeHtml(s){
-  return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));}
+function roleIsAdult(){return profile?.role==="adult";}
+function meMember(){return family?.members?.find(m=>m.id===profile?.memberId);}
+function member(id){return family?.members?.find(m=>m.id===id)||{id,name:"Unknown",emoji:"👤",role:"child"};}
+function room(id){return family?.rooms?.find(r=>r.id===id)||{id,name:"Other",emoji:"✨"};}
+function allMembers(){return family?.members||[];}
+
+function defaultRooms(){
+  return [
+    {id:"kitchen",name:"Kitchen",emoji:"🍽️"},{id:"living",name:"Living Room",emoji:"🛋️"},
+    {id:"bathroom",name:"Bathroom",emoji:"🛁"},{id:"mainbed",name:"Main Bedroom",emoji:"🛏️"},
+    {id:"caseyroom",name:"Casey's Bedroom",emoji:"🧸"},{id:"rileyroom",name:"Riley's Bedroom",emoji:"🎮"},
+    {id:"hall",name:"Hall & Stairs",emoji:"🪜"},{id:"other",name:"Other",emoji:"✨"}
+  ];
 }
+
+function showLoading(){
+  document.getElementById("loadingScreen").classList.remove("hidden");
+  document.getElementById("gateScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+}
+function showGate(html){
+  document.getElementById("loadingScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+  document.getElementById("gateScreen").classList.remove("hidden");
+  document.getElementById("gateCard").innerHTML=html;
+}
+function showApp(){
+  document.getElementById("loadingScreen").classList.add("hidden");
+  document.getElementById("gateScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+  const m=meMember();
+  document.getElementById("profileBtn").textContent=m?.emoji||(roleIsAdult()?"🧑":"🙂");
+  render();
+}
+function setSync(text,cls=""){
+  const b=document.getElementById("syncBadge"); if(!b)return;
+  b.textContent=text;b.className=`sync-badge ${cls}`.trim();
+}
+
+function gateWelcome(){
+  const remembered=localStorage.getItem(FAMILY_CODE_KEY);
+  if(remembered){loadFamilyLogin(remembered).catch(()=>gateStart());return;}
+  gateStart();
+}
+function gateStart(){
+  showGate(`
+    <div class="gate-logo">🏠</div><p class="eyebrow">Welcome</p><h1>Home Helper</h1>
+    <p class="muted">Choose how you want to start on this phone.</p>
+    <button class="primary full" id="joinFamilyBtn">Use my family code</button>
+    <button class="secondary full" id="newFamilyBtn">Create a new family</button>`);
+  document.getElementById("joinFamilyBtn").onclick=gateEnterCode;
+  document.getElementById("newFamilyBtn").onclick=gateCreateFamily;
+}
+function gateEnterCode(){
+  showGate(`
+    <button class="back-btn" id="backGate">← Back</button><p class="eyebrow">Link this phone</p><h2>Enter family code</h2>
+    <p class="muted">You only need to do this once on each new phone.</p>
+    <form id="codeForm"><input class="code-box" id="familyCodeInput" autocomplete="off" autocapitalize="characters" maxlength="10" placeholder="XXXXXXXXXX" required>
+    <div class="gate-error" id="codeError"></div><button class="primary full" type="submit">Continue</button></form>`);
+  document.getElementById("backGate").onclick=gateStart;
+  document.getElementById("codeForm").onsubmit=async e=>{
+    e.preventDefault();
+    const code=document.getElementById("familyCodeInput").value.trim().toUpperCase();
+    try{await loadFamilyLogin(code);}catch{document.getElementById("codeError").textContent="That family code could not be found.";}
+  };
+}
+function gateCreateFamily(){
+  showGate(`
+    <button class="back-btn" id="backGate">← Back</button><p class="eyebrow">New household</p><h2>Create Home Helper</h2>
+    <form id="createFamilyForm">
+      <label>Your name<input id="createParentName" required maxlength="40" placeholder="e.g. Mum"></label>
+      <label>Choose your 6-digit PIN<input id="createParentPin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
+      <div class="gate-error" id="createFamilyError"></div><button class="primary full" type="submit">Create family</button>
+    </form>`);
+  document.getElementById("backGate").onclick=gateStart;
+  document.getElementById("createFamilyForm").onsubmit=createFamilyFromScratch;
+}
+async function createFamilyFromScratch(e){
+  e.preventDefault();
+  const name=document.getElementById("createParentName").value.trim();
+  const pin=document.getElementById("createParentPin").value;
+  const err=document.getElementById("createFamilyError");
+  if(!/^\d{6}$/.test(pin)){err.textContent="Use a 6-digit PIN.";return;}
+  err.textContent="Creating…";
+  const code=makeFamilyCode(), familyId=newId("family"), memberId=newId("member"), email=syntheticEmail(code,memberId);
+  try{
+    const cred=await createUserWithEmailAndPassword(auth,email,pin), uid=cred.user.uid;
+    const parentMember={id:memberId,name,role:"adult",emoji:"🧑",linked:true,uid,loginEmail:email};
+    await setDoc(doc(db,"families",familyId),{name:"Our Home",code,ownerUid:uid,rooms:defaultRooms(),members:[parentMember],createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    await setDoc(doc(db,"users",uid),{familyId,memberId,role:"adult",name});
+    await setDoc(doc(db,"familyCodes",code),{familyId,ownerUid:uid,members:[publicMember(parentMember)]});
+    localStorage.setItem(FAMILY_CODE_KEY,code);localStorage.setItem(ACTIVE_MEMBER_KEY,memberId);
+  }catch(ex){console.error(ex);err.textContent=humanAuthError(ex);}
+}
+
+async function loadFamilyLogin(code){
+  showLoading();
+  const snap=await getDoc(doc(db,"familyCodes",code));if(!snap.exists())throw new Error("Not found");
+  const data=snap.data(), people=data.members||[];
+  localStorage.setItem(FAMILY_CODE_KEY,code);
+  showGate(`
+    <div class="gate-logo">🏠</div><p class="eyebrow">Home Helper</p><h2>Who are you?</h2><p class="muted">Tap your name, then enter your PIN.</p>
+    <div class="login-grid">${people.map(m=>`<button class="person-login" data-login-id="${escapeHtml(m.id)}"><span>${m.emoji||"👤"}</span>${escapeHtml(m.name)}</button>`).join("")}</div>
+    <button class="secondary full" id="differentCodeBtn">Use a different family code</button>`);
+  document.querySelectorAll("[data-login-id]").forEach(btn=>btn.onclick=()=>gatePin(code,people.find(m=>m.id===btn.dataset.loginId)));
+  document.getElementById("differentCodeBtn").onclick=()=>{localStorage.removeItem(FAMILY_CODE_KEY);gateEnterCode();};
+}
+function gatePin(code,m){
+  showGate(`
+    <button class="back-btn" id="backPeople">← Back</button><div class="gate-logo">${m.emoji||"👤"}</div>
+    <p class="eyebrow">${escapeHtml(m.role==="adult"?"Adult account":"Child account")}</p><h2>${escapeHtml(m.name)}</h2>
+    <form id="pinForm"><label>Enter your 6-digit PIN<input id="loginPin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus placeholder="••••••"></label>
+    <div class="gate-error" id="pinError"></div><button class="primary full" type="submit">Open Home Helper</button></form>`);
+  document.getElementById("backPeople").onclick=()=>loadFamilyLogin(code);
+  document.getElementById("pinForm").onsubmit=async e=>{
+    e.preventDefault();const pin=document.getElementById("loginPin").value,msg=document.getElementById("pinError");msg.textContent="Signing in…";
+    try{switchingPerson=false;await signInWithEmailAndPassword(auth,m.loginEmail,pin);localStorage.setItem(ACTIVE_MEMBER_KEY,m.id);}catch(ex){console.error(ex);msg.textContent="That PIN is not correct.";}
+  };
+}
+
+async function upgradeExistingV2(user){
+  showGate(`
+    <div class="gate-logo">✨</div><p class="eyebrow">One-time upgrade</p><h2>Set up your family login</h2>
+    <p class="muted">Your old Home Helper account is signed in. We can convert it to the new pick-your-name + PIN system.</p>
+    <form id="upgradeForm"><label>Your name<input id="upgradeName" required maxlength="40" placeholder="e.g. Mum"></label>
+    <label>Choose a 6-digit PIN<input id="upgradePin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
+    <div class="gate-error" id="upgradeError"></div><button class="primary full" type="submit">Upgrade Home Helper</button></form>`);
+  document.getElementById("upgradeForm").onsubmit=async e=>{
+    e.preventDefault();const name=document.getElementById("upgradeName").value.trim(),pin=document.getElementById("upgradePin").value,msg=document.getElementById("upgradeError");
+    if(!/^\d{6}$/.test(pin)){msg.textContent="Use a 6-digit PIN.";return;}msg.textContent="Upgrading…";
+    try{await migrateV2(user,name,pin);}catch(ex){console.error(ex);msg.textContent=ex?.code==="auth/requires-recent-login"?"Firebase needs a fresh sign-in before changing this account. Sign out, sign back into the old version once, then reopen this page.":`Upgrade stopped: ${ex.message||ex.code||"unknown error"}`;}
+  };
+}
+async function migrateV2(user,parentName,pin){
+  const code=makeFamilyCode(),familyId=newId("family");
+  const oldSnap=await getDoc(doc(db,"homes",user.uid)),old=oldSnap.exists()?oldSnap.data():{};
+  const oldPeople=Array.isArray(old.people)?old.people:[],oldRooms=Array.isArray(old.rooms)&&old.rooms.length?old.rooms:defaultRooms(),oldTasks=Array.isArray(old.tasks)?old.tasks:[];
+  const parentOld=oldPeople.find(p=>p.role==="adult")||oldPeople.find(p=>p.id==="parent"),parentId=parentOld?.id||newId("member"),email=syntheticEmail(code,parentId);
+  await updateEmail(user,email);await updatePassword(user,pin);
+  const members=[{id:parentId,name:parentName,role:"adult",emoji:"🧑",linked:true,uid:user.uid,loginEmail:email}];
+  for(const p of oldPeople){if(p.id===parentId)continue;members.push({id:p.id||newId("member"),name:p.name||"Family member",role:p.role==="adult"?"adult":"child",emoji:p.emoji||"👤",linked:false,uid:null,loginEmail:null});}
+  await setDoc(doc(db,"families",familyId),{name:"Our Home",code,ownerUid:user.uid,rooms:oldRooms,members,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  await setDoc(doc(db,"users",user.uid),{familyId,memberId:parentId,role:"adult",name:parentName});
+  await setDoc(doc(db,"familyCodes",code),{familyId,ownerUid:user.uid,members:[publicMember(members[0])]});
+  if(oldTasks.length){
+    const batch=writeBatch(db);
+    for(const t of oldTasks){
+      const id=t.id||newId("task");
+      batch.set(doc(db,"families",familyId,"tasks",id),{id,title:t.title||"Job",taskType:"cleaning",roomId:t.roomId||"other",assigneeMemberId:t.assigneeId||parentId,createdByUid:user.uid,createdByMemberId:parentId,createdByName:parentName,dueDate:t.due||"",dueTime:"",reward:Number(t.reward||0),notes:t.notes||"",status:t.status==="pending"?"pending":t.status==="approved"?"approved":"open",completedAt:t.status==="pending"||t.status==="approved"?(t.approvedAt||Date.now()):null,approvedAt:t.status==="approved"?(t.approvedAt||Date.now()):null,paid:Boolean(t.paid),notifyAssigned:true,notifyDueDay:true,notifyOneHour:true,notificationAssignedSent:false,notificationDueDaySent:false,notificationOneHourSent:false,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    }
+    await batch.commit();
+  }
+  localStorage.setItem(FAMILY_CODE_KEY,code);localStorage.setItem(ACTIVE_MEMBER_KEY,parentId);
+}
+function publicMember(m){return{id:m.id,name:m.name,role:m.role,emoji:m.emoji||"👤",loginEmail:m.loginEmail};}
+function humanAuthError(ex){const map={"auth/email-already-in-use":"That login already exists. Try again.","auth/weak-password":"Use a 6-digit PIN.","auth/operation-not-allowed":"Email/password sign-in needs enabling in Firebase Authentication.","auth/network-request-failed":"There is a network problem. Try again."};return map[ex?.code]||ex?.message||"Something went wrong.";}
+
+onAuthStateChanged(auth,async user=>{
+  stopRealtime();currentUser=user;profile=null;family=null;tasks=[];
+  if(!user){if(switchingPerson){switchingPerson=false;const c=localStorage.getItem(FAMILY_CODE_KEY);if(c)return loadFamilyLogin(c);}gateWelcome();return;}
+  showLoading();
+  try{
+    const pSnap=await getDoc(doc(db,"users",user.uid));
+    if(!pSnap.exists()){await upgradeExistingV2(user);return;}
+    profile=pSnap.data();localStorage.setItem(ACTIVE_MEMBER_KEY,profile.memberId);await startRealtime();
+  }catch(ex){console.error(ex);showGate(`<div class="gate-logo">⚠️</div><h2>Home Helper could not open</h2><p class="muted">${escapeHtml(ex.message||"Unknown error")}</p><button class="secondary full" id="retryBtn">Try again</button>`);document.getElementById("retryBtn").onclick=()=>location.reload();}
+});
+
+async function startRealtime(){
+  const famRef=doc(db,"families",profile.familyId),initial=await getDoc(famRef);if(!initial.exists())throw new Error("Family data is missing.");
+  family={id:initial.id,...initial.data()};
+  familyUnsub=onSnapshot(famRef,snap=>{if(!snap.exists())return;family={id:snap.id,...snap.data()};setSync("Synced","ok");if(!document.getElementById("appShell").classList.contains("hidden"))render();},()=>setSync("Sync error","err"));
+  tasksUnsub=onSnapshot(collection(db,"families",profile.familyId,"tasks"),snap=>{tasks=snap.docs.map(d=>({id:d.id,...d.data()}));tasks.sort((a,b)=>`${a.dueDate||"9999"} ${a.dueTime||"23:59"}`.localeCompare(`${b.dueDate||"9999"} ${b.dueTime||"23:59"}`));setSync("Synced","ok");showApp();},()=>{setSync("Sync error","err");showApp();});
+}
+function stopRealtime(){if(familyUnsub){familyUnsub();familyUnsub=null;}if(tasksUnsub){tasksUnsub();tasksUnsub=null;}}
+
+function render(){
+  if(!family||!profile)return;
+  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.view===currentView));
+  const app=document.getElementById("app");
+  if(currentView==="home")app.innerHTML=renderHome();
+  if(currentView==="jobs")app.innerHTML=renderJobs();
+  if(currentView==="completed")app.innerHTML=renderCompleted();
+  if(currentView==="family")app.innerHTML=renderFamily();
+  if(currentView==="rewards")app.innerHTML=renderRewards();
+  wireDynamic();populateTaskForm();
+}
+function myOpenTasks(){return tasks.filter(t=>t.assigneeMemberId===profile.memberId&&t.status==="open");}
+function pendingTasks(){return tasks.filter(t=>t.status==="pending");}
+function unpaidTotal(memberId){return tasks.filter(t=>t.assigneeMemberId===memberId&&t.status==="approved"&&!t.paid).reduce((s,t)=>s+Number(t.reward||0),0);}
+function renderHome(){
+  const my=meMember(),myOpen=myOpenTasks().length,waiting=roleIsAdult()?pendingTasks().length:tasks.filter(t=>t.assigneeMemberId===profile.memberId&&t.status==="pending").length;
+  const reward=roleIsAdult()?allMembers().filter(m=>m.role==="child").reduce((s,m)=>s+unpaidTotal(m.id),0):unpaidTotal(profile.memberId);
+  const recent=roleIsAdult()?tasks.filter(t=>t.status==="open").slice(0,5):tasks.filter(t=>t.assigneeMemberId===profile.memberId&&t.status==="open").slice(0,5);
+  return `<section class="hero"><p class="eyebrow" style="color:#cbd5e1">${roleIsAdult()?"Adult account":"My account"}</p><h2>Hi ${escapeHtml(my?.name||profile.name||"there")}</h2><p>${roleIsAdult()?"See everyone's jobs without digging through one long list.":"Your jobs and requests are all in one place."}</p><div class="hero-stats"><div class="stat"><strong>${myOpen}</strong><span>My open jobs</span></div><div class="stat"><strong>${waiting}</strong><span>${roleIsAdult()?"Need approval":"Waiting approval"}</span></div><div class="stat"><strong>${money(reward)}</strong><span>${roleIsAdult()?"To pay":"My rewards"}</span></div></div></section>${roleIsAdult()?renderQuickPeople():""}<div class="section-head"><h2>${roleIsAdult()?"Next household jobs":"My next jobs"}</h2><button class="link-btn" data-action="openTask">+ Add</button></div><div class="cards">${recent.length?recent.map(renderTaskCard).join(""):`<div class="empty">Nothing waiting here.</div>`}</div>`;
+}
+function renderQuickPeople(){return `<div class="section-head"><h2>Jump to a person</h2></div><div class="person-tabs">${allMembers().map(m=>`<button class="chip" data-action="jumpPerson" data-id="${m.id}">${m.emoji||"👤"} ${escapeHtml(m.name)} (${tasks.filter(t=>t.assigneeMemberId===m.id&&t.status==="open").length})</button>`).join("")}</div>`;}
+function personTabs(active,action){
+  const all=`<button class="chip ${active==="all"?"active":""}" data-action="${action}" data-id="all">Everyone</button>`;
+  return `<div class="person-tabs">${roleIsAdult()?all:""}${allMembers().map(m=>`<button class="chip ${active===m.id?"active":""}" data-action="${action}" data-id="${m.id}">${m.emoji||"👤"} ${escapeHtml(m.name)}</button>`).join("")}</div>`;
+}
+function typeTabs(){return `<div class="filter-row"><button class="chip ${typeFilter==="all"?"active":""}" data-action="filterType" data-id="all">All</button><button class="chip ${typeFilter==="cleaning"?"active":""}" data-action="filterType" data-id="cleaning">🧹 Cleaning</button><button class="chip ${typeFilter==="general"?"active":""}" data-action="filterType" data-id="general">🔧 General</button></div>`;}
+function renderJobs(){
+  if(!roleIsAdult()&&personFilter==="all")personFilter=profile.memberId;
+  let list=tasks.filter(t=>t.status==="open");if(personFilter!=="all")list=list.filter(t=>t.assigneeMemberId===personFilter);if(typeFilter!=="all")list=list.filter(t=>t.taskType===typeFilter);
+  return `<div class="section-head"><h2>Active jobs</h2><button class="link-btn" data-action="openTask">+ Add</button></div>${personTabs(personFilter,"filterPerson")}${typeTabs()}<div class="cards">${list.length?list.map(renderTaskCard).join(""):`<div class="empty">No active jobs in this view.</div>`}</div>`;
+}
+function renderCompleted(){
+  if(!roleIsAdult())completedPersonFilter=profile.memberId;
+  let list=tasks.filter(t=>t.status==="pending");if(completedPersonFilter!=="all")list=list.filter(t=>t.assigneeMemberId===completedPersonFilter);
+  return `<div class="section-head"><h2>${roleIsAdult()?"Completed – needs approval":"Waiting for approval"}</h2></div><p class="muted">${roleIsAdult()?"Work down this list and approve each finished job.":"Jobs you finish stay here until an adult approves them."}</p>${personTabs(completedPersonFilter,"filterCompletedPerson")}<div class="cards">${list.length?list.map(renderTaskCard).join(""):`<div class="empty">Nothing waiting for approval.</div>`}</div>`;
+}
+function renderFamily(){
+  const memberCards=allMembers().map(m=>`<article class="card member-row"><div class="member-avatar">${m.emoji||"👤"}</div><div class="member-main"><strong>${escapeHtml(m.name)}</strong><div class="meta">${m.role==="adult"?"Adult":"Child"} · ${m.linked?"Login ready":"No login set up yet"}</div></div>${roleIsAdult()&&!m.linked?`<button class="small-btn done-btn" data-action="setupMember" data-id="${m.id}">Set up login</button>`:""}</article>`).join("");
+  return `<div class="section-head"><h2>Family</h2>${roleIsAdult()?`<button class="link-btn" data-action="newMember">+ Add person</button>`:""}</div><div class="cards">${memberCards}</div><div class="section-head"><h2>Rooms</h2>${roleIsAdult()?`<button class="link-btn" data-action="newRoom">+ Add room</button>`:""}</div><div class="room-grid">${(family.rooms||[]).map(r=>`<div class="card room-tile"><span class="room-emoji">${r.emoji||"🚪"}</span><strong>${escapeHtml(r.name)}</strong></div>`).join("")}</div>`;
+}
+function renderRewards(){
+  if(!roleIsAdult()){
+    const mine=tasks.filter(t=>t.assigneeMemberId===profile.memberId&&t.status==="approved"&&!t.paid);
+    return `<section class="hero"><p class="eyebrow" style="color:#cbd5e1">My rewards</p><h2>${money(unpaidTotal(profile.memberId))}</h2><p>Approved and waiting to be paid.</p></section><div class="cards">${mine.length?mine.map(renderTaskCard).join(""):`<div class="empty">No unpaid rewards yet.</div>`}</div>`;
+  }
+  const kids=allMembers().filter(m=>m.role==="child");
+  return `<section class="hero"><p class="eyebrow" style="color:#cbd5e1">Rewards</p><h2>${money(kids.reduce((s,m)=>s+unpaidTotal(m.id),0))} to pay</h2><p>Only adult-approved jobs count.</p></section><div class="cards">${kids.map(m=>{const total=unpaidTotal(m.id),count=tasks.filter(t=>t.assigneeMemberId===m.id&&t.status==="approved"&&!t.paid).length;return `<article class="card"><div class="paid-row"><div><strong>${m.emoji||"👤"} ${escapeHtml(m.name)}</strong><div class="meta">${count} approved job${count===1?"":"s"}</div></div><div class="money">${money(total)}</div></div>${total>0?`<button class="primary full" data-action="markPaid" data-id="${m.id}">Mark ${money(total)} as paid</button>`:`<div class="meta" style="margin-top:10px">Nothing to pay.</div>`}</article>`;}).join("")}</div>`;
+}
+function renderTaskCard(t){
+  const assignee=member(t.assigneeMemberId),req=member(t.createdByMemberId),r=t.taskType==="cleaning"?room(t.roomId):null,canComplete=t.status==="open"&&(roleIsAdult()||t.assigneeMemberId===profile.memberId);
+  return `<article class="card task-card"><div><div class="task-title">${escapeHtml(t.title)}</div><div class="meta">${assignee.emoji||"👤"} ${escapeHtml(assignee.name)}${r?` · ${r.emoji||"🚪"} ${escapeHtml(r.name)}`:""}</div><div class="meta">Requested by ${escapeHtml(t.createdByName||req.name||"Family")}${t.dueDate?` · Due ${friendlyDate(t.dueDate)}${t.dueTime?` at ${t.dueTime}`:""}`:""}</div><div class="badges"><span class="badge ${t.taskType==="general"?"general":"cleaning"}">${t.taskType==="general"?"🔧 General":"🧹 Cleaning"}</span>${Number(t.reward)>0?`<span class="badge reward">${money(t.reward)}</span>`:""}${t.status==="pending"?`<span class="badge">Waiting approval</span>`:""}${t.status==="approved"?`<span class="badge">${t.paid?"Paid":"Approved"}</span>`:""}</div>${t.notes?`<p class="meta" style="margin:9px 0 0">${escapeHtml(t.notes)}</p>`:""}<div class="task-actions">${canComplete?`<button class="small-btn done-btn" data-action="completeTask" data-id="${t.id}">✓ Done</button>`:""}${roleIsAdult()&&t.status==="pending"?`<button class="small-btn approve-btn" data-action="approveTask" data-id="${t.id}">Approve</button><button class="small-btn reopen-btn" data-action="reopenTask" data-id="${t.id}">Return to do</button>`:""}${roleIsAdult()?`<button class="small-btn delete-btn" data-action="deleteTask" data-id="${t.id}">Delete</button>`:""}</div></div><div style="font-size:26px">${t.taskType==="general"?"🔧":"🧹"}</div></article>`;
+}
+
+function populateTaskForm(){
+  const roomSel=document.getElementById("taskRoom"),assigneeSel=document.getElementById("taskAssignee");
+  if(roomSel)roomSel.innerHTML=(family.rooms||[]).map(r=>`<option value="${r.id}">${r.emoji||"🚪"} ${escapeHtml(r.name)}</option>`).join("");
+  if(assigneeSel)assigneeSel.innerHTML=allMembers().map(m=>`<option value="${m.id}">${m.emoji||"👤"} ${escapeHtml(m.name)}</option>`).join("");
+  const due=document.getElementById("taskDue");if(due&&!due.value)due.value=todayISO();
+  document.getElementById("rewardField")?.classList.toggle("hidden",!roleIsAdult());
+}
+function wireDynamic(){
+  document.querySelectorAll("[data-action]").forEach(el=>el.addEventListener("click",async()=>{
+    const a=el.dataset.action,id=el.dataset.id;
+    if(a==="openTask")openTaskDialog();if(a==="jumpPerson"){personFilter=id;currentView="jobs";render();}if(a==="filterPerson"){personFilter=id;render();}if(a==="filterCompletedPerson"){completedPersonFilter=id;render();}if(a==="filterType"){typeFilter=id;render();}
+    if(a==="completeTask")await completeTask(id);if(a==="approveTask")await approveTask(id);if(a==="reopenTask")await reopenTask(id);if(a==="deleteTask")await deleteTaskAction(id);if(a==="markPaid")await markPaid(id);if(a==="newMember")openMemberDialog();if(a==="setupMember")openMemberDialog(id);if(a==="newRoom")document.getElementById("roomDialog").showModal();
+  }));
+}
+async function completeTask(id){await updateDoc(doc(db,"families",profile.familyId,"tasks",id),{status:"pending",completedAt:Date.now(),updatedAt:serverTimestamp()});}
+async function approveTask(id){await updateDoc(doc(db,"families",profile.familyId,"tasks",id),{status:"approved",approvedAt:Date.now(),updatedAt:serverTimestamp()});}
+async function reopenTask(id){await updateDoc(doc(db,"families",profile.familyId,"tasks",id),{status:"open",completedAt:null,approvedAt:null,updatedAt:serverTimestamp()});}
+async function deleteTaskAction(id){if(confirm("Delete this job?"))await deleteDoc(doc(db,"families",profile.familyId,"tasks",id));}
+async function markPaid(memberId){
+  const toPay=tasks.filter(t=>t.assigneeMemberId===memberId&&t.status==="approved"&&!t.paid);if(!toPay.length)return;
+  if(!confirm(`Mark ${money(toPay.reduce((s,t)=>s+Number(t.reward||0),0))} as paid?`))return;
+  const batch=writeBatch(db);toPay.forEach(t=>batch.update(doc(db,"families",profile.familyId,"tasks",t.id),{paid:true,paidAt:Date.now(),updatedAt:serverTimestamp()}));await batch.commit();
+}
+function openTaskDialog(){
+  populateTaskForm();document.getElementById("taskForm").reset();document.querySelector('input[name="taskType"][value="cleaning"]').checked=true;document.getElementById("roomField").classList.remove("hidden");document.getElementById("taskDue").value=todayISO();document.getElementById("notifyAssigned").checked=true;document.getElementById("notifyDueDay").checked=true;document.getElementById("notifyOneHour").checked=true;document.getElementById("rewardField").classList.toggle("hidden",!roleIsAdult());document.getElementById("taskDialog").showModal();
+}
+document.querySelectorAll('input[name="taskType"]').forEach(r=>r.addEventListener("change",()=>document.getElementById("roomField").classList.toggle("hidden",document.querySelector('input[name="taskType"]:checked').value!=="cleaning")));
+document.getElementById("taskForm").addEventListener("submit",async e=>{
+  e.preventDefault();const type=document.querySelector('input[name="taskType"]:checked').value,id=newId("task");
+  const payload={id,title:document.getElementById("taskTitle").value.trim(),taskType:type,roomId:type==="cleaning"?document.getElementById("taskRoom").value:"",assigneeMemberId:document.getElementById("taskAssignee").value,createdByUid:currentUser.uid,createdByMemberId:profile.memberId,createdByName:meMember()?.name||profile.name||"Family",dueDate:document.getElementById("taskDue").value||"",dueTime:document.getElementById("taskTime").value||"",reward:roleIsAdult()?Number(document.getElementById("taskReward").value||0):0,notes:document.getElementById("taskNotes").value.trim(),status:"open",completedAt:null,approvedAt:null,paid:false,notifyAssigned:document.getElementById("notifyAssigned").checked,notifyDueDay:document.getElementById("notifyDueDay").checked,notifyOneHour:document.getElementById("notifyOneHour").checked,notificationAssignedSent:false,notificationDueDaySent:false,notificationOneHourSent:false,createdAt:serverTimestamp(),updatedAt:serverTimestamp()};
+  try{await setDoc(doc(db,"families",profile.familyId,"tasks",id),payload);document.getElementById("taskDialog").close();}catch(ex){alert(`Could not add job: ${ex.message}`);}
+});
+
+function openMemberDialog(existingId=""){
+  if(!roleIsAdult())return;const existing=existingId?member(existingId):null;
+  document.getElementById("memberExistingId").value=existing?.id||"";document.getElementById("memberName").value=existing?.name||"";document.getElementById("memberRole").value=existing?.role||"child";document.getElementById("memberName").disabled=Boolean(existing);document.getElementById("memberRole").disabled=Boolean(existing);document.getElementById("memberPin").value="";document.getElementById("memberDialogTitle").textContent=existing?`Set up ${existing.name}`:"Add a person";document.getElementById("memberSaveBtn").textContent=existing?"Create their login":"Add person & login";document.getElementById("memberDialog").showModal();
+}
+document.getElementById("memberForm").addEventListener("submit",async e=>{
+  e.preventDefault();if(!roleIsAdult())return;
+  const existingId=document.getElementById("memberExistingId").value,pin=document.getElementById("memberPin").value;if(!/^\d{6}$/.test(pin)){alert("Use a 6-digit PIN.");return;}
+  const existing=existingId?member(existingId):null,name=existing?.name||document.getElementById("memberName").value.trim(),role=existing?.role||document.getElementById("memberRole").value;
+  if(!name)return;if(!existing&&allMembers().some(m=>m.name.toLowerCase()===name.toLowerCase())){alert("That name is already in the family.");return;}
+  const memberId=existing?.id||newId("member"),email=syntheticEmail(family.code,memberId),secondaryName=`secondary-${Date.now()}-${Math.random().toString(36).slice(2)}`,secondApp=initializeApp(firebaseConfig,secondaryName),secondAuth=getAuth(secondApp);
+  try{
+    const cred=await createUserWithEmailAndPassword(secondAuth,email,pin),uid=cred.user.uid,newMember={id:memberId,name,role,emoji:role==="adult"?"🧑":"🙂",linked:true,uid,loginEmail:email};
+    const newMembers=existing?allMembers().map(m=>m.id===memberId?newMember:m):[...allMembers(),newMember];
+    await setDoc(doc(db,"users",uid),{familyId:profile.familyId,memberId,role,name});await updateDoc(doc(db,"families",profile.familyId),{members:newMembers,updatedAt:serverTimestamp()});await updateDoc(doc(db,"familyCodes",family.code),{members:newMembers.filter(m=>m.linked).map(publicMember)});document.getElementById("memberDialog").close();
+  }catch(ex){console.error(ex);alert(humanAuthError(ex));}finally{try{await signOut(secondAuth);}catch{}try{await deleteApp(secondApp);}catch{}}
+});
+document.getElementById("roomForm").addEventListener("submit",async e=>{
+  e.preventDefault();if(!roleIsAdult())return;const name=document.getElementById("roomName").value.trim();if(!name)return;if((family.rooms||[]).some(r=>r.name.toLowerCase()===name.toLowerCase())){alert("That room already exists.");return;}
+  const rooms=[...(family.rooms||[]),{id:newId("room"),name,emoji:"🚪"}];await updateDoc(doc(db,"families",profile.familyId),{rooms,updatedAt:serverTimestamp()});document.getElementById("roomForm").reset();document.getElementById("roomDialog").close();
+});
+
+document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>{currentView=b.dataset.view;render();}));
+document.getElementById("quickAddBtn").addEventListener("click",openTaskDialog);
+document.getElementById("profileBtn").addEventListener("click",()=>{const m=meMember();document.getElementById("profileName").textContent=m?.name||profile.name||"Home Helper";document.getElementById("profileRole").textContent=roleIsAdult()?"Adult account":"Child account";document.getElementById("familyCodeText").textContent=`Family code: ${family.code}`;document.getElementById("profileDialog").showModal();});
+document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>document.getElementById(b.dataset.close).close()));
+document.getElementById("copyFamilyCodeBtn").addEventListener("click",async()=>{try{await navigator.clipboard.writeText(family.code);alert("Family code copied.");}catch{prompt("Copy this family code:",family.code);}});
+document.getElementById("switchPersonBtn").addEventListener("click",async()=>{document.getElementById("profileDialog").close();switchingPerson=true;await signOut(auth);});
+document.getElementById("signOutBtn").addEventListener("click",async()=>{document.getElementById("profileDialog").close();localStorage.removeItem(ACTIVE_MEMBER_KEY);switchingPerson=false;await signOut(auth);});
+
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));}
