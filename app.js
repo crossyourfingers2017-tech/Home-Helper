@@ -133,7 +133,7 @@ function gateCreateFamily(){
     <button class="back-btn" id="backGate">← Back</button><p class="eyebrow">New household</p><h2>Create Home Helper</h2>
     <form id="createFamilyForm">
       <label>Your name<input id="createParentName" required maxlength="40" placeholder="e.g. Mum"></label>
-      <label>Choose your 6-digit PIN<input id="createParentPin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
+      <label>Choose your 6-digit PIN<input id="createParentPin" type="password" class="pin-input" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
       <div class="gate-error" id="createFamilyError"></div><button class="primary full" type="submit">Create family</button>
     </form>`);
   document.getElementById("backGate").onclick=gateStart;
@@ -173,7 +173,7 @@ function gatePin(code,m){
   showGate(`
     <button class="back-btn" id="backPeople">← Back</button><div class="gate-logo">${m.emoji||"👤"}</div>
     <p class="eyebrow">${escapeHtml(m.role==="adult"?"Adult account":"Child account")}</p><h2>${escapeHtml(m.name)}</h2>
-    <form id="pinForm"><label>Enter your 6-digit PIN<input id="loginPin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus placeholder="••••••"></label>
+    <form id="pinForm"><label>Enter your 6-digit PIN<input id="loginPin" type="password" class="pin-input" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus placeholder="••••••"></label>
     <div class="gate-error" id="pinError"></div><button class="primary full" type="submit">Open Home Helper</button></form>`);
   document.getElementById("backPeople").onclick=()=>loadFamilyLogin(code);
   document.getElementById("pinForm").onsubmit=async e=>{
@@ -187,7 +187,7 @@ async function upgradeExistingV2(user){
     <div class="gate-logo">✨</div><p class="eyebrow">One-time upgrade</p><h2>Set up your family login</h2>
     <p class="muted">Your old Home Helper account is signed in. We can convert it to the new pick-your-name + PIN system.</p>
     <form id="upgradeForm"><label>Your name<input id="upgradeName" required maxlength="40" placeholder="e.g. Mum"></label>
-    <label>Choose a 6-digit PIN<input id="upgradePin" class="pin-input" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
+    <label>Choose a 6-digit PIN<input id="upgradePin" type="password" class="pin-input" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="••••••"></label>
     <div class="gate-error" id="upgradeError"></div><button class="primary full" type="submit">Upgrade Home Helper</button></form>`);
   document.getElementById("upgradeForm").onsubmit=async e=>{
     e.preventDefault();const name=document.getElementById("upgradeName").value.trim(),pin=document.getElementById("upgradePin").value,msg=document.getElementById("upgradeError");
