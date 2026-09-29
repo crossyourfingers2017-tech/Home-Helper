@@ -199,22 +199,67 @@ async function migrateV2(user,parentName,pin){
   const code=makeFamilyCode(),familyId=newId("family");
   const oldSnap=await getDoc(doc(db,"homes",user.uid)),old=oldSnap.exists()?oldSnap.data():{};
   const oldPeople=Array.isArray(old.people)?old.people:[],oldRooms=Array.isArray(old.rooms)&&old.rooms.length?old.rooms:defaultRooms(),oldTasks=Array.isArray(old.tasks)?old.tasks:[];
-  const parentOld=oldPeople.find(p=>p.role==="adult")||oldPeople.find(p=>p.id==="parent"),parentId=parentOld?.id||newId("member"),email=user.email;
-  await updatePassword(user,pin);
-  const members=[{id:parentId,name:parentName,role:"adult",emoji:"🧑",linked:true,uid:user.uid,loginEmail:email}];
-  for(const p of oldPeople){if(p.id===parentId)continue;members.push({id:p.id||newId("member"),name:p.name||"Family member",role:p.role==="adult"?"adult":"child",emoji:p.emoji||"👤",linked:false,uid:null,loginEmail:null});}
+  const parentOld=oldPeople.find(p=>p.role==="adult")||oldPeople.find(p=>p.id==="parent"),parentId=parentOld?.id||newId("member"),email=syntheticEmail(code,parentId);
+
+  // Create a brand-new PIN login instead of changing the legacy account.
+  // This avoids Firebase's recent-login requirement for changing passwords/emails.
+  const secondaryName=`migration-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const secondApp=initializeApp(firebaseConfig,secondaryName);
+  const secondAuth=getAuth(secondApp);
+  let newUid;
+  try{
+    const cred=await createUserWithEmailAndPassword(secondAuth,email,pin);
+    newUid=cred.user.uid;
+    await signOut(secondAuth);
+  }finally{
+    try{await deleteApp(secondApp);}catch{}
+  }
+
+  const members=[{id:parentId,name:parentName,role:"adult",emoji:"🧑",linked:true,uid:newUid,loginEmail:email}];
+  for(const p of oldPeople){
+    if(p.id===parentId)continue;
+    members.push({id:p.id||newId("member"),name:p.name||"Family member",role:p.role==="adult"?"adult":"child",emoji:p.emoji||"👤",linked:false,uid:null,loginEmail:null});
+  }
+
+  // Create the family under the legacy signed-in user, temporarily make it an adult,
+  // then create the real PIN profile and remove the legacy user's Firestore access.
   await setDoc(doc(db,"families",familyId),{name:"Our Home",code,ownerUid:user.uid,rooms:oldRooms,members,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
   await setDoc(doc(db,"users",user.uid),{familyId,memberId:parentId,role:"adult",name:parentName});
   await setDoc(doc(db,"familyCodes",code),{familyId,ownerUid:user.uid,members:[publicMember(members[0])]});
+  await setDoc(doc(db,"users",newUid),{familyId,memberId:parentId,role:"adult",name:parentName});
+
   if(oldTasks.length){
     const batch=writeBatch(db);
     for(const t of oldTasks){
       const id=t.id||newId("task");
-      batch.set(doc(db,"families",familyId,"tasks",id),{id,title:t.title||"Job",taskType:"cleaning",roomId:t.roomId||"other",assigneeMemberId:t.assigneeId||parentId,createdByUid:user.uid,createdByMemberId:parentId,createdByName:parentName,dueDate:t.due||"",dueTime:"",reward:Number(t.reward||0),notes:t.notes||"",status:t.status==="pending"?"pending":t.status==="approved"?"approved":"open",completedAt:t.status==="pending"||t.status==="approved"?(t.approvedAt||Date.now()):null,approvedAt:t.status==="approved"?(t.approvedAt||Date.now()):null,paid:Boolean(t.paid),notifyAssigned:true,notifyDueDay:true,notifyOneHour:true,notificationAssignedSent:false,notificationDueDaySent:false,notificationOneHourSent:false,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      batch.set(doc(db,"families",familyId,"tasks",id),{
+        id,title:t.title||"Job",taskType:"cleaning",roomId:t.roomId||"other",
+        assigneeMemberId:t.assigneeId||parentId,
+        createdByUid:user.uid,createdByMemberId:parentId,createdByName:parentName,
+        dueDate:t.due||"",dueTime:"",reward:Number(t.reward||0),notes:t.notes||"",
+        status:t.status==="pending"?"pending":t.status==="approved"?"approved":"open",
+        completedAt:t.status==="pending"||t.status==="approved"?(t.approvedAt||Date.now()):null,
+        approvedAt:t.status==="approved"?(t.approvedAt||Date.now()):null,
+        paid:Boolean(t.paid),
+        notifyAssigned:true,notifyDueDay:true,notifyOneHour:true,
+        notificationAssignedSent:false,notificationDueDaySent:false,notificationOneHourSent:false,
+        createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+      });
     }
     await batch.commit();
   }
-  localStorage.setItem(FAMILY_CODE_KEY,code);localStorage.setItem(ACTIVE_MEMBER_KEY,parentId);
+
+  await updateDoc(doc(db,"families",familyId),{ownerUid:newUid,updatedAt:serverTimestamp()});
+  await updateDoc(doc(db,"familyCodes",code),{ownerUid:newUid,members:[publicMember(members[0])]});
+
+  localStorage.setItem(FAMILY_CODE_KEY,code);
+  localStorage.setItem(ACTIVE_MEMBER_KEY,parentId);
+
+  // Remove legacy Firestore privileges, then switch the browser to the new PIN login.
+  await deleteDoc(doc(db,"users",user.uid));
+  switchingPerson=false;
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth,email,pin);
 }
 function publicMember(m){return{id:m.id,name:m.name,role:m.role,emoji:m.emoji||"👤",loginEmail:m.loginEmail};}
 function humanAuthError(ex){const map={"auth/email-already-in-use":"That login already exists. Try again.","auth/weak-password":"Use a 6-digit PIN.","auth/operation-not-allowed":"Email/password sign-in needs enabling in Firebase Authentication.","auth/network-request-failed":"There is a network problem. Try again."};return map[ex?.code]||ex?.message||"Something went wrong.";}
